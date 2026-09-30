@@ -17,6 +17,8 @@ const MERGE_GAP_S = 0.4;  // pauses shorter than this don't split a move
 const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the move
 const KNOCK_ACC = 6;      // m/s^2 spike near the end of the move = phone knocked onto the surface
 const KNOCK_WIN_S = 0.6;
+const KNOCK_MAX_RATE = 150; // Hz: above this a knock is sampled properly and doesn't matter
+const STAGE_GAP_S = 0.8;  // a still pause at least this long splits the move into stages
 const TRUST_WORLD_ROT = 10 * Math.PI / 180; // rotation beyond which world accel isn't used for stillness
 const FUSED_REF_S = 0.3;  // average the phone-fusion reference attitude over the still start
 
@@ -250,112 +252,138 @@ export function processRecording(calibSamples, samples, opts = {}) {
     return { cal, still: true, delta: [0, 0, 0], path: [{ t: 0, p: [0, 0, 0] }], motionStart: 0, motionEnd: 0,
              quality: grade(cal, { endHold: tEnd - t0, duration: 0, endVel: 0, tilt: 0 }, ['No movement detected.']) };
   }
-  let iFirst = real[0].a;
-  let iLast = real[real.length - 1].b;
-
-  // A knock when the phone is set down is too brief to be sampled properly, so its velocity
-  // change is lost and the end-of-move correction then spreads that error over the whole move.
-  let knock = 0;
-  for (let i = iLast; i >= 0 && samples[i].t >= samples[iLast].t - KNOCK_WIN_S; i--) {
-    knock = Math.max(knock, Math.abs(norm(acc(samples[i])) - cal.gMag));
+  // Stages: moves separated by a still pause long enough to act as a checkpoint. Each pause
+  // resets velocity to zero and re-anchors the tilt/gravity correction, so drift cannot build
+  // up across the whole move. A move with no such pause is a single stage.
+  const groups = [{ a: real[0].a, b: real[0].b }];
+  for (const r of real.slice(1)) {
+    const g = groups[groups.length - 1];
+    if (samples[r.a].t - samples[g.b].t < STAGE_GAP_S) g.b = r.b; else groups.push({ a: r.a, b: r.b });
   }
-  if (knock > KNOCK_ACC) {
-    warnings.push(`Phone was set down with a knock (${knock.toFixed(1)} m/s²) — stop just above the surface and set it down gently.`);
-  }
+  const iLastRaw = groups[groups.length - 1].b;
   // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
-  while (iFirst > 0 && moving[iFirst - 1]) iFirst--;
+  while (groups[0].a > 0 && moving[groups[0].a - 1]) groups[0].a--;
 
   // Drop anything after the end hold (the Stop tap) so it can't spoil the end-hold correction.
-  const tail = runs.find((r) => r.a > iLast);
+  const tail = runs.find((r) => r.a > iLastRaw);
   if (tail) {
     n = tail.a;
     samples = samples.slice(0, n);
     tEnd = samples[n - 1].t;
   }
+  const sampleRate = (n - 1) / (tEnd - t0);
 
-  // Expand by a margin, clamped to the recording.
-  const tS = Math.max(t0, samples[iFirst].t - MARGIN_S);
-  const tE = Math.min(tEnd, samples[iLast].t + MARGIN_S);
-  while (iFirst > 0 && samples[iFirst - 1].t >= tS) iFirst--;
-  while (iLast < n - 1 && samples[iLast + 1].t <= tE) iLast++;
+  // A knock when the phone is set down can be too brief to sample at browser rates (~55 Hz), so
+  // its velocity change is lost. At native rates (hundreds of Hz) it is captured properly.
+  let knock = 0;
+  for (let i = iLastRaw; i >= 0 && samples[i].t >= samples[iLastRaw].t - KNOCK_WIN_S; i--) {
+    knock = Math.max(knock, Math.abs(norm(acc(samples[i])) - cal.gMag));
+  }
+  const knockMatters = knock > KNOCK_ACC && sampleRate < KNOCK_MAX_RATE;
+  if (knockMatters) {
+    warnings.push(`Phone was set down with a knock (${knock.toFixed(1)} m/s²) — stop just above the surface and set it down gently.`);
+  }
+
+  // Expand each stage by a margin, never eating more than a third of a neighbouring pause.
+  const stages = groups.map((g, k) => {
+    const before = k === 0 ? MARGIN_S * 3 : samples[g.a].t - samples[groups[k - 1].b].t;
+    const after = k === groups.length - 1 ? MARGIN_S * 3 : samples[groups[k + 1].a].t - samples[g.b].t;
+    let a = g.a, b = g.b;
+    const tS = Math.max(t0, samples[a].t - Math.min(MARGIN_S, before / 3));
+    const tE = Math.min(tEnd, samples[b].t + Math.min(MARGIN_S, after / 3));
+    while (a > 0 && samples[a - 1].t >= tS) a--;
+    while (b < n - 1 && samples[b + 1].t <= tE) b++;
+    return { a, b };
+  });
+  stages.forEach((s, k) => { s.holdEnd = k < stages.length - 1 ? stages[k + 1].a - 1 : n - 1; });
+  const iFirst = stages[0].a;
+  const iLast = stages[stages.length - 1].b;
   const endHold = tEnd - samples[iLast].t;
   if (endHold < 0.5) warnings.push('Phone was not held still before Stop — end-of-move correction is weak.');
 
-  // 2. End-hold correction: once still again, the rotated specific force must point straight
-  //    up with the same size as gravity. Any tilt mismatch (gyro scale error) or magnitude
-  //    mismatch (accel scale error) is caused by the phone turning, so it is phased in
-  //    according to how much of the total rotation has happened, not by elapsed time.
-  const span = samples[iLast].t - samples[iFirst].t;
-  const fracT = (i) => (i <= iFirst ? 0 : i >= iLast ? 1 : (samples[i].t - samples[iFirst].t) / span);
+  // Cumulative rotation, used to phase in orientation-caused corrections within each stage.
   const rotCum = new Array(n).fill(0);
-  for (let i = iFirst + 1; i <= iLast; i++) {
-    const dt = samples[i].t - samples[i - 1].t;
-    rotCum[i] = rotCum[i - 1] + norm(sub(gyr(samples[i]), cal.gyroBias)) * dt;
-  }
-  for (let i = iLast + 1; i < n; i++) rotCum[i] = rotCum[iLast];
-  const rotTotal = rotCum[iLast];
-  const fracR = rotTotal > 5 * Math.PI / 180 ? (i) => rotCum[i] / rotTotal : fracT;
-
-  let tilt = 0;
-  let tiltAxis = [0, 0, 1];
-  let gMagEnd = cal.gMag;
-  const endStill = samples.slice(iLast + 1);
-  if (endStill.length >= 5) {
-    const aEnd = meanStd(endStill, acc).mean;
-    gMagEnd = norm(aEnd);
-    // Average the rotated specific force over the whole hold, not one sample's attitude.
-    const gSum = [0, 0, 0];
-    for (let i = iLast + 1; i < n; i++) { const w = qRotate(q[i], acc(samples[i])); for (let k = 0; k < 3; k++) gSum[k] += w[k]; }
-    const gEndW = unit(gSum);
-    const c = cross(gEndW, [0, 0, 1]);
-    tilt = Math.atan2(norm(c), gEndW[2]);
-    tiltAxis = c;
+  for (let i = 1; i < n; i++) {
+    rotCum[i] = rotCum[i - 1] + norm(sub(gyr(samples[i]), cal.gyroBias)) * (samples[i].t - samples[i - 1].t);
   }
 
-  // 3. World-frame linear acceleration.
-  const aw = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const f = fracR(i);
-    let qi = q[i];
-    if (tilt > 0) qi = qMul(qFromAxisAngle(tiltAxis, tilt * f), qi);
-    const a = qRotate(qi, acc(samples[i]));
-    aw[i] = [a[0], a[1], a[2] - (cal.gMag + (gMagEnd - cal.gMag) * f)];
-  }
-  const frac = opts.zupt === 'rotation' ? fracR : fracT;
-
-  // 4. Integrate velocity over the motion window only (outside it the phone is still).
   const v = new Array(n).fill(null).map(() => [0, 0, 0]);
-  for (let i = iFirst + 1; i <= iLast; i++) {
-    const dt = samples[i].t - samples[i - 1].t;
-    for (let k = 0; k < 3; k++) v[i][k] = v[i - 1][k] + 0.5 * (aw[i][k] + aw[i - 1][k]) * dt;
-  }
-  // Zero-velocity update: velocity must be zero at the end; remove the residual as a
-  // linear ramp (equivalent to a constant acceleration bias over the move).
-  const vEnd = v[iLast].slice();
-  for (let i = iFirst; i <= iLast; i++) {
-    const f = frac(i);
-    for (let k = 0; k < 3; k++) v[i][k] -= vEnd[k] * f;
+  let qCorr = [1, 0, 0, 0];   // tilt corrections from earlier stages, carried forward
+  let gCur = cal.gMag;        // gravity magnitude as seen in the current attitude
+  for (const st of stages) {
+    const { a, b, holdEnd } = st;
+    const span = samples[b].t - samples[a].t;
+    const fracT = (i) => (i <= a ? 0 : i >= b ? 1 : (samples[i].t - samples[a].t) / span);
+    const rotSpan = rotCum[b] - rotCum[a];
+    const fracR = rotSpan > 5 * Math.PI / 180 ? (i) => Math.min(1, Math.max(0, (rotCum[i] - rotCum[a]) / rotSpan)) : fracT;
+
+    // 2. Hold correction: once still again, the rotated specific force must point straight up
+    //    with the same size as gravity. Tilt mismatch (gyro scale error) and magnitude mismatch
+    //    (accel scale error) come from the phone turning, so they are phased in by rotation.
+    let tilt = 0, tiltAxis = [0, 0, 1], gHold = gCur;
+    if (holdEnd - b >= 5) {
+      const gSum = [0, 0, 0], aSum = [0, 0, 0];
+      for (let i = b + 1; i <= holdEnd; i++) {
+        const w = qRotate(qMul(qCorr, q[i]), acc(samples[i]));
+        for (let k = 0; k < 3; k++) { gSum[k] += w[k]; aSum[k] += acc(samples[i])[k]; }
+      }
+      gHold = norm(aSum) / (holdEnd - b);
+      const gW = unit(gSum);
+      tiltAxis = cross(gW, [0, 0, 1]);
+      tilt = Math.atan2(norm(tiltAxis), gW[2]);
+    }
+
+    // 3. World-frame linear acceleration within the stage.
+    const aw = [];
+    for (let i = a; i <= b; i++) {
+      const f = fracR(i);
+      let qi = qMul(qCorr, q[i]);
+      if (tilt > 0) qi = qMul(qFromAxisAngle(tiltAxis, tilt * f), qi);
+      const w = qRotate(qi, acc(samples[i]));
+      aw.push([w[0], w[1], w[2] - (gCur + (gHold - gCur) * f)]);
+    }
+
+    // 4. Integrate velocity from rest, then zero-velocity update at the hold: remove the residual
+    //    as a linear ramp (equivalent to a constant acceleration bias over the stage).
+    for (let i = a + 1; i <= b; i++) {
+      const dt = samples[i].t - samples[i - 1].t;
+      for (let k = 0; k < 3; k++) v[i][k] = v[i - 1][k] + 0.5 * (aw[i - a][k] + aw[i - 1 - a][k]) * dt;
+    }
+    const vEnd = v[b].slice();
+    const frac = opts.zupt === 'rotation' ? fracR : fracT;
+    for (let i = a; i <= b; i++) {
+      const f = frac(i);
+      for (let k = 0; k < 3; k++) v[i][k] -= vEnd[k] * f;
+    }
+    Object.assign(st, { vEnd, tilt, duration: span });
+
+    if (tilt > 0) qCorr = qMul(qFromAxisAngle(tiltAxis, tilt), qCorr);
+    gCur = gHold;
   }
 
-  // 5. Integrate position.
+  // 5. Integrate position (velocity is zero outside the stages).
   const path = [];
   let p = [0, 0, 0];
   for (let i = 0; i < n; i++) {
-    if (i > iFirst && i <= iLast) {
+    if (i > 0) {
       const dt = samples[i].t - samples[i - 1].t;
       p = [0, 1, 2].map((k) => p[k] + 0.5 * (v[i][k] + v[i - 1][k]) * dt);
     }
     path.push({ t: samples[i].t - t0, p: p.slice() });
   }
 
-  const duration = span;
-  if (duration > 8) warnings.push(`Move took ${duration.toFixed(1)} s — drift grows fast with time; aim for under 5 s.`);
-  const quality = grade(cal, { endHold, duration, endVel: norm(vEnd), tilt, knock }, warnings);
+  // Drift grows with time within a stage, so judge the longest stage, not the whole recording.
+  const worst = stages.reduce((w, s) => (norm(s.vEnd) > norm(w.vEnd) ? s : w));
+  const duration = Math.max(...stages.map((s) => s.duration));
+  const tilt = Math.max(...stages.map((s) => s.tilt));
+  if (duration > 8) warnings.push(`A move took ${duration.toFixed(1)} s — drift grows fast with time; aim for under 5 s, or pause still for a second part-way.`);
+  const quality = grade(cal, { endHold, duration, endVel: norm(worst.vEnd), tilt, knock: knockMatters ? knock : 0 }, warnings);
 
   return { cal, still: false, delta: p, path, quality,
            motionStart: samples[iFirst].t - t0, motionEnd: samples[iLast].t - t0,
-           endVelocityCorrected: vEnd, tiltCorrectionDeg: tilt * 180 / Math.PI,
-           sampleRate: (n - 1) / (tEnd - t0), knock, orientation: opts.orientation || 'gyro', fusedConvention };
+           stages: stages.map((s) => ({ start: samples[s.a].t - t0, end: samples[s.b].t - t0, drift: norm(s.vEnd), tiltDeg: s.tilt * 180 / Math.PI })),
+           endVelocityCorrected: worst.vEnd, tiltCorrectionDeg: tilt * 180 / Math.PI,
+           sampleRate, knock, orientation: opts.orientation || 'gyro', fusedConvention };
 }
 
 function grade(cal, m, warnings) {

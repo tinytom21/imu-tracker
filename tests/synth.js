@@ -63,19 +63,30 @@ export function generate(opts = {}) {
   const rand = mulberry32(o.seed);
   const dt = 1 / o.rate;
   const q0 = qMul(qAxisAngle([1, 0, 0], o.pitchDeg * Math.PI / 180), qAxisAngle([0, 1, 0], o.rollDeg * Math.PI / 180));
-  const thMax = o.rotDeg * Math.PI / 180;
   const axN = Math.hypot(...o.rotAxis);
   const axU = o.rotAxis.map((c) => c / axN);
   const recStart = o.calibSec;
-  const moveStart = recStart + o.preHold, moveEnd = moveStart + o.moveSec;
+  const moveStart = recStart + o.preHold;
+  // A move is one or more segments ({ D, moveSec, rotDeg, pause }) separated by still pauses.
+  const segs = [];
+  let tSeg = moveStart;
+  for (const s of o.segments || [{ D: o.D, moveSec: o.moveSec, rotDeg: o.rotDeg, pause: 0 }]) {
+    segs.push({ D: s.D, T: s.moveSec, th: (s.rotDeg ?? 0) * Math.PI / 180, start: tSeg });
+    tSeg += s.moveSec + (s.pause || 0);
+  }
+  const moveEnd = tSeg;
   const total = moveEnd + o.postHold;
+  if (o.segments) o.D = o.segments.reduce((acc, s) => acc.map((x, k) => x + s.D[k]), [0, 0, 0]);
 
   function truth(t) {
-    const m = minJerk(t - moveStart, o.moveSec);
-    const th = thMax * m.s, thd = thMax * m.v;
+    let th = 0, thd = 0;
+    const aw = [0, 0, 0], pos = [0, 0, 0];
+    for (const s of segs) {
+      const m = minJerk(t - s.start, s.T);
+      th += s.th * m.s; thd += s.th * m.v;
+      for (let k = 0; k < 3; k++) { aw[k] += s.D[k] * m.a; pos[k] += s.D[k] * m.s; }
+    }
     const q = qMul(q0, qAxisAngle(axU, th));
-    const aw = o.D.map((d) => d * m.a);
-    const pos = o.D.map((d) => d * m.s);
     const fdev = qRot(qInv(q), [aw[0], aw[1], aw[2] + G]);
     return { q, aw, pos, fdev, omega: axU.map((c) => c * thd) };
   }

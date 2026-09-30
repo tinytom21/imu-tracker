@@ -208,7 +208,19 @@ function showResult(calib, rec, source) {
   el.total.innerHTML = `Straight-line distance: <b>${mm(Math.hypot(x, y, z))} mm</b>`;
 
   // comparison of methods
+  // (diagnostics only: lives in a collapsed <details> at the bottom of the details area)
   el.compare.innerHTML = '';
+  el.details.after(el.compare);
+  const diag = document.createElement('details');
+  diag.className = 'diag';
+  const diagSum = document.createElement('summary');
+  diagSum.textContent = 'Diagnostics: phone fusion comparison';
+  diag.appendChild(diagSum);
+  el.compare.appendChild(diag);
+  diag.addEventListener('toggle', () => {
+    viz?.update(res.path, diag.open && fused ? fused.path : null);
+  });
+  const fusionWarnings = [];
   if (fused) {
     const cell = (tag, text) => { const c = document.createElement(tag); c.textContent = text; return c; };
     const table = document.createElement('table');
@@ -227,14 +239,17 @@ function showResult(calib, rec, source) {
     // The velocity left over at the end hold is what the correction had to remove: a method whose
     // orientation was right needs little, so lower drift = more self-consistent.
     cap.textContent = 'mm · Drift = leftover speed removed at the end (m/s), lower is more trustworthy';
-    el.compare.append(table, cap);
+    const dnote = document.createElement('p');
+    dnote.className = 'cmp-note';
+    dnote.textContent = 'Phone fusion is shown for diagnostics only; it has been less accurate than the gyro method in real tests.';
+    diag.append(table, cap, dnote);
   } else {
     const p = document.createElement('p');
     p.className = 'cmp-note';
     p.textContent = hasQ
       ? 'Phone fusion failed: ' + fusedErr
       : 'Phone fusion: not available on this device/browser';
-    el.compare.appendChild(p);
+    diag.appendChild(p);
   }
 
   const q = res.quality;
@@ -245,8 +260,18 @@ function showResult(calib, rec, source) {
   const warnList = [...q.warnings];
   if (fused) {
     for (const w of fused.quality.warnings) {
-      if (!shown.has(w)) { shown.add(w); warnList.push('Phone fusion: ' + w); }
+      if (!shown.has(w)) { shown.add(w); fusionWarnings.push('Phone fusion: ' + w); }
     }
+  }
+  if (fusionWarnings.length) {
+    const ul = document.createElement('ul');
+    ul.className = 'cmp-warn';
+    for (const w of fusionWarnings) {
+      const li = document.createElement('li');
+      li.textContent = w;
+      ul.appendChild(li);
+    }
+    diag.appendChild(ul);
   }
   for (const w of warnList) {
     const li = document.createElement('li');
@@ -256,7 +281,9 @@ function showResult(calib, rec, source) {
 
   const drift = res.endVelocityCorrected ? Math.hypot(...res.endVelocityCorrected) : 0;
   const details = [
-    ['Move duration', q.duration.toFixed(2) + ' s'],
+    res.stages && res.stages.length > 1
+      ? ['Stages', `${res.stages.length} (paused still between) · longest ${q.duration.toFixed(2)} s`]
+      : ['Move duration', q.duration.toFixed(2) + ' s'],
     ['End hold', q.endHold.toFixed(2) + ' s'],
     ['Sample rate', (res.sampleRate ?? 0).toFixed(0) + ' Hz'],
     ['Sensor source', source],
@@ -283,7 +310,7 @@ function showResult(calib, rec, source) {
     const dd = document.createElement('dd'); dd.textContent = v;
     el.details.append(dt, dd);
   }
-  viz?.update(res.path, fused ? fused.path : null);
+  viz?.update(res.path, null);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 

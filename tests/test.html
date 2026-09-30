@@ -136,6 +136,14 @@ try {
   multi('13a Native 400 Hz, 800 mm route', { ...NATIVE, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4 }, 60);
   multi('13b Native 400 Hz, fused orientation', { ...NATIVE, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 60);
   multi('13c Native 400 Hz, slow sideways slide', { ...NATIVE, D: [0.5, 0, 0], rotDeg: 0, moveSec: 4 }, 60);
+  // Multi-stage: a long reach like the car route B (2.3 m in ~9 s) done in one go vs with a
+  // still pause part-way. Accel bias that changes with orientation makes the long move drift.
+  const LONG = { ...NATIVE, accScale: [1.02, 0.98, 1.025], gyroScale: [1.03, 0.97, 1.02] };
+  const legs = [{ D: [0.25, 1.1, 0.6], moveSec: 4, rotDeg: 50 }, { D: [0.23, 1.1, 0.3], moveSec: 4, rotDeg: 40 }];
+  multi('14a Long reach in one go (for comparison)', { ...LONG, segments: legs.map((l) => ({ ...l, pause: 0 })) }, 1e9);
+  multi('14b Long reach with 1 s pause part-way', { ...LONG, segments: [{ ...legs[0], pause: 1.0 }, legs[1]] }, 60);
+  multi('14c Three legs with pauses', { ...LONG, segments: [{ ...legs[0], pause: 1.0 }, { D: [0, 0.4, 0.2], moveSec: 2, rotDeg: 20, pause: 1.2 }, legs[1]] }, 80);
+  multi('14d Pause too short to split (0.5 s)', { ...NATIVE, segments: [{ D: [0.3, 0.5, 0.4], moveSec: 3, rotDeg: 30, pause: 0.5 }, { D: [0.2, 0.3, 0.2], moveSec: 3, rotDeg: 20 }] }, 80);
   {
     const errsAll = []; let still = true;
     for (let s = 1; s <= 5; s++) {
