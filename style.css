@@ -1,0 +1,73 @@
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #16181d; --muted: #5d6470; --border: #d9dce2;
+  --accent: #2563eb; --stop: #dc2626; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+  --canvas: #eef0f4; --grid: #c9cdd6;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317; --panel: #1a1f26; --text: #e8eaee; --muted: #9aa3b0; --border: #2c333d;
+    --accent: #4c8dff; --stop: #ef4444; --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
+    --canvas: #12161b; --grid: #2f3742;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); }
+h1 { font-size: 1.4rem; margin: 4px 0 12px; }
+[hidden] { display: none !important; }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px; margin-bottom: 12px; }
+.steps { margin: 0; padding-left: 1.3rem; color: var(--muted); }
+.steps li { margin: 6px 0; }
+.steps b { color: var(--text); }
+
+.banner { background: var(--bad); color: #fff; padding: 12px 14px; border-radius: 12px;
+  margin-bottom: 12px; font-weight: 600; overflow-wrap: anywhere; }
+
+.big { font-size: 1.7rem; font-weight: 700; text-align: center; margin: 6px 0 12px; }
+.bar { height: 14px; background: var(--canvas); border-radius: 7px; overflow: hidden; }
+#calibBar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+.note { margin-top: 10px; color: var(--warn); font-size: .95rem; text-align: center; }
+.status.still { color: var(--ok); }
+.stats { display: flex; justify-content: space-around; color: var(--muted); }
+.stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.main { width: 100%; min-height: 72px; font-size: 1.6rem; font-weight: 700; border: 0;
+  border-radius: 16px; background: var(--accent); color: #fff; margin: 0 0 14px; cursor: pointer; }
+.main.stop { background: var(--stop); }
+.main:disabled { opacity: .6; }
+
+.rows { display: grid; gap: 6px; }
+.row { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.row small { font-size: 1rem; font-weight: 500; color: var(--muted); }
+.total { margin-top: 8px; color: var(--muted); font-size: 1.05rem; }
+.total b { color: var(--text); }
+.badge-line { margin: 10px 0 4px; }
+.badge { display: inline-block; padding: 4px 14px; border-radius: 999px; color: #fff; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; font-size: .9rem; }
+.badge.good { background: var(--ok); } .badge.fair { background: var(--warn); } .badge.poor { background: var(--bad); }
+.warnings { margin: 6px 0; padding-left: 1.2rem; color: var(--warn); font-size: .95rem; }
+.warnings:empty { display: none; }
+.details { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 8px 0 0;
+  font-size: .85rem; color: var(--muted); }
+.details dt { grid-column: 1; } .details dd { grid-column: 2; margin: 0; color: var(--text);
+  text-align: right; font-variant-numeric: tabular-nums; }
+
+.viz { padding: 8px; }
+.view3d { width: 100%; height: 300px; border-radius: 10px; overflow: hidden; background: var(--canvas);
+  color: var(--muted); display: flex; align-items: center; justify-content: center; text-align: center; }
+.view3d canvas { display: block; touch-action: none; }
+.plots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.plots figure { margin: 0; min-width: 0; }
+.plots canvas { width: 100%; height: 160px; display: block; border-radius: 8px; background: var(--canvas); }
+.plots figcaption { text-align: center; font-size: .75rem; color: var(--muted); margin-top: 2px; }
+
+.tools { display: grid; gap: 10px; }
+.secondary { display: block; width: 100%; min-height: 52px; padding: 12px; font-size: 1rem; font-weight: 600;
+  text-align: center; color: var(--text); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; cursor: pointer; font-family: inherit; }
+.secondary:disabled { opacity: .5; cursor: default; }
+.filebtn input { display: none; }

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>IMU processing tests</title>
+<style>
+body{font:14px system-ui,sans-serif;margin:16px;background:#fff;color:#111}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4px 8px;text-align:left;font-variant-numeric:tabular-nums}
+.PASS{color:#0a7d2c;font-weight:bold}.FAIL{color:#c00;font-weight:bold}.INFO{color:#666;font-weight:bold}
+#summary{margin:12px 0;font-weight:bold}
+</style></head><body>
+<h2>IMU processing test harness</h2>
+<div id="summary">running...</div>
+<table><thead><tr><th>Case</th><th>Expected (mm)</th><th>Got (mm)</th><th>Error per axis (mm)</th><th>Tolerance</th><th>Extra</th><th>Result</th></tr></thead><tbody id="rows"></tbody></table>
+<script type="module">
+import { processRecording } from '../processing.js';
+import { generate, G } from './synth.js';
+
+const REAL = { accNoise: 0.02, accBias: [0.02, -0.015, 0.03], gyroNoise: 0.002, gyroBias: [0.003, -0.002, 0.004] };
+const D0 = [-0.02, 1.5, 0.75];
+const mm = (v) => v.map((x) => (x * 1000).toFixed(1)).join(', ');
+const results = [];
+const f1 = (x) => x.toFixed(1);
+
+function run(opts) {
+  const g = generate(opts);
+  const r = processRecording(g.calibSamples, g.samples);
+  const D = g.opts.D;
+  const err = r.delta.map((x, i) => Math.abs(x - D[i]) * 1000);
+  return { g, r, D, err };
+}
+function add(row) {
+  results.push(row);
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${row.name}</td><td>${row.expected}</td><td>${row.got}</td><td>${row.errText}</td><td>${row.tol}</td><td>${row.extra || ''}</td><td class="${row.status}">${row.status}</td>`;
+  document.getElementById('rows').appendChild(tr);
+}
+function single(name, opts, tolMm, extraCheck) {
+  const { r, D, err } = run(opts);
+  const max = Math.max(...err);
+  let ok = max < tolMm, extra = `tilt ${r.tiltCorrectionDeg?.toFixed(2)}deg, quality=${r.quality.level}`;
+  if (extraCheck) { const e = extraCheck(r); ok = ok && e.ok; extra += '; ' + e.text; }
+  add({ name, expected: mm(D), got: mm(r.delta), err: err.map(Number), errText: err.map(f1).join(', '),
+        tol: `< ${tolMm} mm`, extra, status: ok ? 'PASS' : 'FAIL' });
+}
+function multi(name, opts, tolMm, seeds = 10) {
+  const errs = [];
+  let worst = null;
+  for (let s = 1; s <= seeds; s++) {
+    const x = run({ ...opts, seed: s });
+    errs.push(x.err);
+    if (!worst || Math.max(...x.err) > Math.max(...worst.err)) worst = x;
+  }
+  const mean = [0, 1, 2].map((k) => errs.reduce((a, e) => a + e[k], 0) / errs.length);
+  const max = [0, 1, 2].map((k) => Math.max(...errs.map((e) => e[k])));
+  const ok = tolMm == null ? null : Math.max(...max) < tolMm;
+  add({ name: `${name} (${seeds} seeds)`, expected: mm(worst.D), got: `worst seed: ${mm(worst.r.delta)}`,
+        err: max, mean, errText: `mean ${mean.map(f1).join(', ')} | max ${max.map(f1).join(', ')}`,
+        tol: tolMm == null ? 'report only' : `max < ${tolMm} mm`,
+        extra: `worst-seed quality ${worst.r.quality.level}`, status: ok == null ? 'INFO' : ok ? 'PASS' : 'FAIL' });
+}
+
+try {
+  // generator self-checks
+  {
+    const g = generate({ moveSec: 2, rotDeg: 45, pitchDeg: 30 });
+    const v = [0, 0, 0], p = [0, 0, 0]; const dt = 1e-4;
+    for (let t = 0; t < g.moveEnd + 1; t += dt) { const a = g.truth(t).aw; for (let k = 0; k < 3; k++) { v[k] += a[k] * dt; p[k] += v[k] * dt; } }
+    const e = p.map((x, i) => Math.abs(x - g.opts.D[i]) * 1000);
+    add({ name: 'GEN: double-integrate a_world == D', expected: mm(g.opts.D), got: mm(p), errText: e.map(f1).join(', '), err: e, tol: '< 0.5 mm', status: Math.max(...e) < 0.5 ? 'PASS' : 'FAIL' });
+    const rest = (pitch) => generate({ pitchDeg: pitch }).samples[0];
+    const a0 = rest(0), a90 = rest(90), a30 = rest(30);
+    const ok = Math.abs(a0.az - G) < 1e-9 && Math.abs(a0.ax) < 1e-9 && Math.abs(a90.ay - G) < 1e-9 && Math.abs(a90.az) < 1e-9
+      && Math.abs(Math.hypot(a30.ax, a30.ay, a30.az) - G) < 1e-9 && Math.abs(a30.ay - G * Math.sin(Math.PI / 6)) < 1e-9;
+    add({ name: 'GEN: rest f_dev = +g on up axis', expected: 'flat az=g; pitch90 ay=g', got: `flat (${a0.ax.toFixed(2)},${a0.ay.toFixed(2)},${a0.az.toFixed(2)}) p90 (${a90.ax.toFixed(2)},${a90.ay.toFixed(2)},${a90.az.toFixed(2)})`, errText: '-', tol: '1e-9', status: ok ? 'PASS' : 'FAIL' });
+    const gg = generate({ moveSec: 2, rotDeg: 45, rotAxis: [1, 1, 0.3] });
+    const ths = gg.truth(gg.moveEnd + 0.5).q, th0 = gg.truth(0).q;
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(ths[0] * th0[0] + ths[1] * th0[1] + ths[2] * th0[2] + ths[3] * th0[3]))) * 180 / Math.PI;
+    add({ name: 'GEN: total rotation = 45 deg', expected: '45.00', got: ang.toFixed(2), errText: Math.abs(ang - 45).toFixed(3) + ' deg', tol: '< 0.01', status: Math.abs(ang - 45) < 0.01 ? 'PASS' : 'FAIL' });
+    // gyro consistency: integrate omega numerically -> final angle
+    let th = 0; for (let t = 0; t < gg.moveEnd + 1; t += 1e-4) th += Math.hypot(...gg.truth(t).omega) * 1e-4;
+    th *= 180 / Math.PI;
+    add({ name: 'GEN: integral of |omega| = 45 deg', expected: '45.00', got: th.toFixed(2), errText: Math.abs(th - 45).toFixed(3) + ' deg', tol: '< 0.01', status: Math.abs(th - 45) < 0.01 ? 'PASS' : 'FAIL' });
+  }
+
+  single('1 Ideal flat 100Hz', { D: D0 }, 5);
+  single('2 Ideal pitch30 + rot45 about (1,1,0.3)', { D: D0, pitchDeg: 30, rotDeg: 45, rotAxis: [1, 1, 0.3] }, 10);
+  single('3 Upright (pitch 90) ideal', { D: D0, pitchDeg: 90 }, 10, (r) => ({ ok: r.cal.forwardAxis === 'back', text: `forwardAxis=${r.cal.forwardAxis}` }));
+  multi('4 Realistic S23 100Hz, rot30, move 3s', { ...REAL, D: D0, rotDeg: 30, moveSec: 3 }, 60);
+  multi('5 Realistic 60Hz +-20% jitter', { ...REAL, D: D0, rotDeg: 30, moveSec: 3, rate: 60, jitter: 0.2 }, 80);
+  { // 6 slow
+    const seeds = 5, out = [];
+    for (let s = 1; s <= seeds; s++) out.push(run({ ...REAL, D: D0, rotDeg: 30, moveSec: 8, seed: s }));
+    const max = [0, 1, 2].map((k) => Math.max(...out.map((x) => x.err[k])));
+    const mean = [0, 1, 2].map((k) => out.reduce((a, x) => a + x.err[k], 0) / seeds);
+    const levels = out.map((x) => x.r.quality.level);
+    const ok = levels.every((l) => l !== 'good');
+    add({ name: '6 Slow move 8s realistic (5 seeds)', expected: mm(D0), got: mm(out[0].r.delta) + ' (seed1)', errText: `mean ${mean.map(f1).join(', ')} | max ${max.map(f1).join(', ')}`,
+          err: max, mean, tol: 'report; quality != good', extra: `levels: ${levels.join(',')}`, status: ok ? 'INFO' : 'FAIL' });
+  }
+  { // 7 no movement
+    const errsAll = []; let still = true;
+    for (let s = 1; s <= 5; s++) {
+      const g = generate({ ...REAL, D: [0, 0, 0], moveSec: 2, seed: s });
+      const r = processRecording(g.calibSamples, g.samples);
+      errsAll.push(r.delta.map((x) => Math.abs(x) * 1000)); still = still && r.still === true;
+    }
+    const max = [0, 1, 2].map((k) => Math.max(...errsAll.map((e) => e[k])));
+    add({ name: '7 No movement, realistic (5 seeds)', expected: '0, 0, 0', got: '(max abs) ' + max.map(f1).join(', '), errText: max.map(f1).join(', '), err: max, tol: '< 5 mm & still===true', extra: `still=${still}`, status: (Math.max(...max) < 5 && still) ? 'PASS' : 'FAIL' });
+  }
+  { // 8 short end hold
+    const g = generate({ ...REAL, D: D0, rotDeg: 30, moveSec: 3, postHold: 0.2 });
+    const r = processRecording(g.calibSamples, g.samples);
+    const err = r.delta.map((x, i) => Math.abs(x - D0[i]) * 1000);
+    const w = r.quality.warnings.find((x) => /not held still/i.test(x));
+    add({ name: '8 Short end hold 0.2s realistic', expected: mm(D0), got: mm(r.delta), errText: err.map(f1).join(', '), err, tol: 'report; warning "not held still"', extra: `warnings: ${JSON.stringify(r.quality.warnings)}`, status: w ? 'INFO' : 'FAIL' });
+  }
+  multi('9a Vertical lift D=(0,0,0.5) realistic', { ...REAL, D: [0, 0, 0.5], rotDeg: 30, moveSec: 3 }, 60);
+  multi('9b Sideways D=(0.8,0,0) realistic', { ...REAL, D: [0.8, 0, 0], rotDeg: 30, moveSec: 3 }, 60);
+} catch (e) {
+  add({ name: 'EXCEPTION', expected: '', got: String((e && e.stack) || e), errText: '', tol: '', status: 'FAIL' });
+}
+
+const pass = results.filter((r) => r.status === 'PASS').length, fail = results.filter((r) => r.status === 'FAIL').length, info = results.filter((r) => r.status === 'INFO').length;
+document.getElementById('summary').textContent = `${pass} PASS, ${fail} FAIL, ${info} INFO (of ${results.length})`;
+window.testResults = { pass, fail, info, total: results.length, results };
+window.testsDone = true;
+</script></body></html>

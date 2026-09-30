@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>IMU Tracker</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>IMU Tracker</h1>
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <section id="idle" class="panel">
+      <ol class="steps">
+        <li>Point the <b>top of the phone</b> toward the direction you want to call <b>+Y</b> (e.g. the front of the car).</li>
+        <li>Press <b>Start</b> and hold the phone completely still until told to move.</li>
+        <li>Move smoothly, ideally in under 5&nbsp;s.</li>
+        <li>At the destination hold it still for ~2&nbsp;s, then press <b>Stop</b>.</li>
+      </ol>
+    </section>
+
+    <section id="calib" class="panel" hidden>
+      <div id="calibMsg" class="big">Hold still…</div>
+      <div class="bar"><div id="calibBar"></div></div>
+      <div id="calibNote" class="note" hidden></div>
+    </section>
+
+    <section id="rec" class="panel" hidden>
+      <div id="recStatus" class="big status">Moving…</div>
+      <div class="stats"><span>Time <b id="recTime">0.0 s</b></span><span>Rate <b id="recRate">– Hz</b></span></div>
+      <div id="recNote" class="note" hidden></div>
+    </section>
+
+    <button id="main" class="main" type="button">Start</button>
+
+    <section id="result" hidden>
+      <div class="panel">
+        <div class="rows" id="rows"></div>
+        <div class="total" id="total"></div>
+        <div class="badge-line"><span id="badge" class="badge">good</span></div>
+        <ul id="warnings" class="warnings"></ul>
+        <dl id="details" class="details"></dl>
+      </div>
+      <div class="panel viz">
+        <div id="view3d" class="view3d"></div>
+        <div class="plots">
+          <figure><canvas id="plotTop"></canvas><figcaption>Top view (X → , Y ↑)</figcaption></figure>
+          <figure><canvas id="plotSide"></canvas><figcaption>Side view (Y → , Z ↑)</figcaption></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="tools">
+      <button id="dl" class="secondary" type="button" disabled>Download raw data (CSV)</button>
+      <label class="secondary filebtn">Load CSV<input id="csv" type="file" accept=".csv,text/csv,text/plain"></label>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
