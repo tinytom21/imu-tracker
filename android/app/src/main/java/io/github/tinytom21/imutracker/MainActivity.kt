@@ -2,10 +2,13 @@ package io.github.tinytom21.imutracker
 
 import android.annotation.SuppressLint
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -26,6 +29,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewAssetLoader
 import java.io.File
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
@@ -155,6 +159,41 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun info(): String = recorder.info()
+
+        @JavascriptInterface
+        fun saveCsv(fileName: String, csv: String): String {
+            return try {
+                val safe = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "imu.csv" }
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, safe)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/IMU Tracker")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw java.io.IOException("MediaStore insert failed")
+                try {
+                    val out = resolver.openOutputStream(uri) ?: throw java.io.IOException("Cannot open output stream")
+                    out.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
+                    val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                    resolver.update(uri, done, null, null)
+                } catch (e: Exception) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                    throw e
+                }
+                val path = "Download/IMU Tracker/$safe"
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Saved to $path", Toast.LENGTH_LONG).show()
+                }
+                JSONObject().put("ok", true).put("path", path).toString()
+            } catch (e: Exception) {
+                JSONObject().put("ok", false).put("error", e.message ?: e.javaClass.simpleName).toString()
+            }
+        }
 
         @JavascriptInterface
         fun shareCsv(fileName: String, csv: String) {

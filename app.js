@@ -194,6 +194,7 @@ function showResult(calib, rec, source) {
     }
   }
   el.dl.disabled = false;
+  if (el.share) el.share.disabled = false;
   el.result.hidden = false;
 
   const [x, y, z] = res.delta;
@@ -213,16 +214,19 @@ function showResult(calib, rec, source) {
     const table = document.createElement('table');
     table.className = 'cmp-table';
     const head = table.createTHead().insertRow();
-    for (const h of ['Method', 'X', 'Y', 'Z']) head.appendChild(cell('th', h));
+    for (const h of ['Method', 'X', 'Y', 'Z', 'Drift']) head.appendChild(cell('th', h));
     const body = table.createTBody();
     for (const [name, r] of [['Gyro (app)', res], ['Phone fusion', fused]]) {
       const row = body.insertRow();
       row.appendChild(cell('th', name));
       for (const v of r.delta) row.appendChild(cell('td', signed(v)));
+      row.appendChild(cell('td', r.quality.endVel.toFixed(2)));
     }
     const cap = document.createElement('div');
     cap.className = 'cmp-unit';
-    cap.textContent = 'mm';
+    // The velocity left over at the end hold is what the correction had to remove: a method whose
+    // orientation was right needs little, so lower drift = more self-consistent.
+    cap.textContent = 'mm · Drift = leftover speed removed at the end (m/s), lower is more trustworthy';
     el.compare.append(table, cap);
   } else {
     const p = document.createElement('p');
@@ -323,24 +327,55 @@ function parseCsv(text) {
   return { calib, rec };
 }
 
-el.dl.addEventListener('click', () => {
-  const fileName = `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-  if (window.AndroidIMU) {
-    // Blob downloads don't work in a WebView: hand the CSV to the native share sheet.
+const csvFileName = () => `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+
+if (window.AndroidIMU) {
+  // Blob downloads don't work in a WebView: save via MediaStore or hand to the share sheet.
+  el.dl.textContent = 'Save CSV to phone';
+  el.share = document.createElement('button');
+  el.share.className = 'secondary';
+  el.share.type = 'button';
+  el.share.textContent = 'Share CSV…';
+  el.share.disabled = el.dl.disabled;
+  el.dl.after(el.share);
+  const saveNote = document.createElement('p');
+  saveNote.className = 'version';
+  saveNote.hidden = true;
+  el.dl.parentNode.after(saveNote);
+  el.share.addEventListener('click', () => {
     try {
-      window.AndroidIMU.shareCsv(fileName, toCsv(calibSamples, recSamples));
+      window.AndroidIMU.shareCsv(csvFileName(), toCsv(calibSamples, recSamples));
     } catch (e) {
       showError('Could not share CSV: ' + (e.message || e));
     }
-    return;
-  }
+  });
+  el.dl.addEventListener('click', () => {
+    saveNote.hidden = true;
+    try {
+      const r = JSON.parse(window.AndroidIMU.saveCsv(csvFileName(), toCsv(calibSamples, recSamples)));
+      if (r.ok) {
+        clearError();
+        saveNote.textContent = 'Saved to ' + r.path;
+        saveNote.hidden = false;
+      } else {
+        showError('Could not save CSV: ' + (r.error || 'unknown error'));
+      }
+    } catch (e) {
+      showError('Could not save CSV: ' + (e.message || e));
+    }
+  });
+} else {
+  el.dl.addEventListener('click', downloadCsvBlob);
+}
+
+function downloadCsvBlob() {
   const blob = new Blob([toCsv(calibSamples, recSamples)], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-});
+}
 
 el.csv.addEventListener('change', async () => {
   const file = el.csv.files[0];
