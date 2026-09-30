@@ -1,7 +1,9 @@
 // IMU Tracker UI: idle -> calibrating -> recording -> result.
-import { stillnessOf, processRecording } from './processing.js';
-import { Capture } from './capture.js';
-import { createViz } from './viz.js';
+// Modules are loaded with the release version in their URL so a new release bypasses the cache.
+const V = new URL(import.meta.url).searchParams.get('v') || Date.now();
+const { stillnessOf, processRecording } = await import(`./processing.js?v=${V}`);
+const { Capture } = await import(`./capture.js?v=${V}`);
+const { createViz } = await import(`./viz.js?v=${V}`);
 
 const CALIB_S = 2.0;      // required continuous stillness at start
 const CALIB_WIN_S = 0.4;  // short window used to track continuous stillness
@@ -215,6 +217,7 @@ function showResult(calib, rec, source) {
     ['Drift corrected', drift.toFixed(3) + ' m/s'],
     ['Tilt correction', (res.tiltCorrectionDeg ?? 0).toFixed(2) + '°'],
     ['Forward axis', res.cal.forwardAxis],
+    ['App version', window.APP_VERSION || '?'],
   ];
   el.details.innerHTML = '';
   for (const [k, v] of details) {

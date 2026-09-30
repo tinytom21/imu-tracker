@@ -71,3 +71,5 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; }
   border-radius: 12px; cursor: pointer; font-family: inherit; }
 .secondary:disabled { opacity: .5; cursor: default; }
 .filebtn input { display: none; }
+
+.version { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 1.5rem 0 0.5rem; }

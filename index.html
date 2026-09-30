@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>IMU Tracker</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=0.3">
   <script type="importmap">
   {
     "imports": {
@@ -64,7 +64,19 @@
       <button id="dl" class="secondary" type="button" disabled>Download raw data (CSV)</button>
       <label class="secondary filebtn">Load CSV<input id="csv" type="file" accept=".csv,text/csv,text/plain"></label>
     </section>
+    <p id="version" class="version">version …</p>
   </main>
-  <script type="module" src="app.js"></script>
+  <script type="module">
+    // version.json is fetched uncached, and every module URL carries its version, so a new
+    // release is always picked up even while GitHub Pages lets the browser cache files.
+    let info = { version: 'dev-' + Date.now(), date: '' };
+    try {
+      const r = await fetch('version.json', { cache: 'no-store' });
+      if (r.ok) info = await r.json();
+    } catch { /* offline: load uncached */ }
+    window.APP_VERSION = info.version;
+    document.getElementById('version').textContent = `version ${info.version}` + (info.date ? ` · ${info.date}` : '');
+    await import(`./app.js?v=${encodeURIComponent(info.version)}`);
+  </script>
 </body>
 </html>
