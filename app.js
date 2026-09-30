@@ -1,7 +1,8 @@
 // IMU Tracker UI: idle -> calibrating -> recording -> result.
 // Modules are loaded with the release version in their URL so a new release bypasses the cache.
 const V = new URL(import.meta.url).searchParams.get('v') || Date.now();
-const { stillnessOf, processRecording } = await import(`./processing.js?v=${V}`);
+const { stillnessOf, processRecording, calibrate, windowIsStill, STILL_WINDOW_S, CHECKPOINT_HOLD_S } =
+  await import(`./processing.js?v=${V}`);
 const { Capture } = await import(`./capture.js?v=${V}`);
 const { createViz } = await import(`./viz.js?v=${V}`);
 
@@ -9,11 +10,46 @@ const CALIB_S = 2.0;      // required continuous stillness at start
 const CALIB_WIN_S = 0.4;  // short window used to track continuous stillness
 const END_STILL_S = 1.5;  // window for the "safe to press Stop" check
 const MINUS = '−';
+const CP_EVAL_S = 0.05;   // checkpoint stillness evaluated at ~20 Hz
+const CP_FLASH_MS = 1500;
+
+// Live checkpoint detection. Drive with update(recSamples, nowT) (nowT = seconds on the sample clock).
+// A checkpoint registers once the phone has moved and then stayed continuously still for CHECKPOINT_HOLD_S.
+class CheckpointTracker {
+  constructor(calSamples) { this.cal = calibrate(calSamples); this.reset(); }
+  reset() {
+    this.count = 0; this.moved = false; // recording starts right after a still calibration hold this.stillSince = null; this.lastEval = -Infinity;
+    this.still = false; this.progress = 0; this.registered = false;
+  }
+  // Returns { still, moved, progress (0..1), count, registered (true only on the update that registers) }.
+  update(samples, nowT) {
+    this.registered = false;
+    if (samples.length < 5 || nowT - this.lastEval < CP_EVAL_S) return this.state();
+    this.lastEval = nowT;
+    this.still = windowIsStill(lastWindow(samples, STILL_WINDOW_S), this.cal);
+    if (!this.still) {
+      this.moved = true; this.stillSince = null; this.progress = 0;
+    } else if (this.moved) {
+      // The window being still means stillness began about one window ago.
+      if (this.stillSince === null) this.stillSince = nowT - STILL_WINDOW_S;
+      this.progress = Math.min(1, (nowT - this.stillSince) / CHECKPOINT_HOLD_S);
+      if (this.progress >= 1) {
+        this.count++; this.moved = false; this.registered = true; this.stillSince = null; this.progress = 0;
+      }
+    }
+    return this.state();
+  }
+  state() {
+    return { still: this.still, moved: this.moved, progress: this.progress, count: this.count, registered: this.registered };
+  }
+}
+window.CheckpointTracker = CheckpointTracker;
 
 const $ = (id) => document.getElementById(id);
 const el = {
   banner: $('banner'), idle: $('idle'), calib: $('calib'), rec: $('rec'), result: $('result'),
   main: $('main'), calibMsg: $('calibMsg'), calibBar: $('calibBar'), calibNote: $('calibNote'),
+  cpMsg: $('cpMsg'), cpBar: $('cpBar'), cpCount: $('cpCount'),
   recStatus: $('recStatus'), recTime: $('recTime'), recRate: $('recRate'), recNote: $('recNote'),
   rows: $('rows'), compare: $('compare'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
   dl: $('dl'), csv: $('csv'),
@@ -26,6 +62,10 @@ let recSamples = [];
 let stillStart = null;
 let wakeLock = null;
 let tick = null;
+let cpTick = null;
+let cpTracker = null;
+let cpFlashUntil = 0;
+let audioCtx = null;
 let sourceLabel = '–';
 let viz = null;
 
@@ -76,7 +116,38 @@ function lastWindow(samples, seconds) {
   return samples.slice(i);
 }
 
-function stopTicker() { clearInterval(tick); tick = null; }
+function stopTicker() { clearInterval(tick); tick = null; clearInterval(cpTick); cpTick = null; }
+
+function beep() {
+  try {
+    if (!audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; g.gain.value = 0.05;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.12);
+  } catch { /* optional */ }
+}
+
+function renderCheckpoint(s) {
+  const flashing = performance.now() < cpFlashUntil;
+  if (s.registered) {
+    cpFlashUntil = performance.now() + CP_FLASH_MS;
+    el.cpMsg.textContent = `✓ Checkpoint ${s.count} — carry on (or press Stop)`;
+    el.cpMsg.classList.add('flash');
+    beep();
+  } else if (!flashing) {
+    el.cpMsg.classList.remove('flash');
+    el.cpMsg.textContent = s.moved && s.still ? 'Hold still…' : ' ';
+  }
+  el.cpBar.style.width = ((flashing || s.registered) ? 100 : s.progress * 100).toFixed(0) + '%';
+  el.cpCount.textContent = 'Checkpoints: ' + s.count;
+  el.cpCount.classList.toggle('has', s.count > 0);
+}
+
+function checkpointTick() {
+  if (state !== 'recording' || !cpTracker || recSamples.length < 5) return;
+  renderCheckpoint(cpTracker.update(recSamples, recSamples[recSamples.length - 1].t));
+}
 
 function abortRun() {
   stopTicker();
@@ -96,6 +167,8 @@ async function startRun() {
   clearError();
   setState('starting');
   try {
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume?.(); }
+    catch { audioCtx = null; }
     await capture.requestPermission(); // first await inside the click handler (iOS)
     buf = []; calibSamples = []; recSamples = []; stillStart = null;
     await capture.start();
@@ -145,8 +218,12 @@ function calibTick() {
     recSamples = [];
     buf = [];
     stopTicker();
+    try { cpTracker = new CheckpointTracker(calibSamples); } catch { cpTracker = null; }
+    cpFlashUntil = 0;
+    renderCheckpoint({ still: false, moved: false, progress: 0, count: 0, registered: false });
     setState('recording');
     tick = setInterval(recTick, 150);
+    cpTick = setInterval(checkpointTick, CP_EVAL_S * 1000);
   }
 }
 

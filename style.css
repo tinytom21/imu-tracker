@@ -32,6 +32,15 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; }
 #calibBar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
 .note { margin-top: 10px; color: var(--warn); font-size: .95rem; text-align: center; }
 .status.still { color: var(--ok); }
+.cp { margin: 10px 0 6px; }
+.cp-msg { min-height: 3.4rem; display: flex; align-items: center; justify-content: center; text-align: center;
+  font-size: 1.35rem; font-weight: 700; border-radius: 12px; padding: 6px 10px; color: var(--muted);
+  border: 2px solid transparent; transition: background .15s, color .15s; }
+.cp-msg.flash { background: var(--ok); color: #fff; border-color: var(--ok); }
+.cp-bar { height: 18px; border-radius: 9px; margin-top: 8px; }
+#cpBar { height: 100%; width: 0; background: var(--ok); transition: width .05s linear; }
+.cp-count { text-align: center; margin-top: 8px; font-size: 1.1rem; font-weight: 600; color: var(--muted); }
+.cp-count.has { color: var(--ok); }
 .stats { display: flex; justify-content: space-around; color: var(--muted); }
 .stats b { color: var(--text); font-variant-numeric: tabular-nums; }
 

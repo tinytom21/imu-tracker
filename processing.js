@@ -138,15 +138,33 @@ function smooth(samples, vecs, win) {
 // Orientation-independent stillness: a still phone gives a constant accelerometer vector
 // (whatever its attitude or scale errors) and ~zero bias-corrected gyro. Judged on the local
 // spread of the raw accel vector over a short window plus smoothed gyro rate.
+function stillThresholds(cal) {
+  // With Chrome's 0.1 m/s^2 rounding a still phone can flicker by ~0.09 across 3 axes; unrounded
+  // native data is quiet enough for a tighter floor.
+  return { thrA: Math.max(cal.quantized ? 0.12 : 0.05, 2.5 * cal.accStd), thrG: Math.max(0.03, 2.5 * cal.gyroStd + 0.01) };
+}
+
+// How long to hold still mid-move, live, so the processing reliably treats it as a checkpoint.
+// Checked against real recordings: pauses the processing split on measured 0.85-1.2 s live.
+export const CHECKPOINT_HOLD_S = STAGE_GAP_S + 0.2;
+
+// Live check with the same test the processing uses: is the phone still over this window?
+// Pass roughly the last VAR_WIN_S seconds of samples.
+export function windowIsStill(win, cal) {
+  if (win.length < 5) return false;
+  const { thrA, thrG } = stillThresholds(cal);
+  const a = meanStd(win, acc);
+  const g = norm(sub(meanStd(win, gyr).mean, cal.gyroBias));
+  return a.std < thrA && g < thrG;
+}
+export const STILL_WINDOW_S = VAR_WIN_S;
+
 function stillFlags(samples, cal) {
   const a = samples.map(acc);
   const mean = smooth(samples, a, VAR_WIN_S);
   const sq = smooth(samples, a.map((v) => [v[0] * v[0], v[1] * v[1], v[2] * v[2]]), VAR_WIN_S);
   const g = smooth(samples, samples.map((s) => sub(gyr(s), cal.gyroBias)), SMOOTH_S);
-  // With Chrome's 0.1 m/s^2 rounding a still phone can flicker by ~0.09 across 3 axes; unrounded
-  // native data is quiet enough for a tighter floor.
-  const thrA = Math.max(cal.quantized ? 0.12 : 0.05, 2.5 * cal.accStd);
-  const thrG = Math.max(0.03, 2.5 * cal.gyroStd + 0.01);
+  const { thrA, thrG } = stillThresholds(cal);
   return a.map((_, i) => {
     const varSum = sq[i][0] - mean[i][0] ** 2 + sq[i][1] - mean[i][1] ** 2 + sq[i][2] - mean[i][2] ** 2;
     return Math.sqrt(Math.max(0, varSum)) < thrA && norm(g[i]) < thrG;
@@ -258,7 +276,7 @@ export function processRecording(calibSamples, samples, opts = {}) {
   const groups = [{ a: real[0].a, b: real[0].b }];
   for (const r of real.slice(1)) {
     const g = groups[groups.length - 1];
-    if (samples[r.a].t - samples[g.b].t < STAGE_GAP_S) g.b = r.b; else groups.push({ a: r.a, b: r.b });
+    if (samples[r.a].t - samples[g.b].t < (opts.stageGap ?? STAGE_GAP_S)) g.b = r.b; else groups.push({ a: r.a, b: r.b });
   }
   const iLastRaw = groups[groups.length - 1].b;
   // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
