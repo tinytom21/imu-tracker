@@ -53,6 +53,7 @@ const DEFAULTS = {
   pitchDeg: 0, rollDeg: 0,
   rotAxis: [1, 1, 0.3], rotDeg: 0,
   accNoise: 0, accBias: [0, 0, 0], gyroNoise: 0, gyroBias: [0, 0, 0],
+  accScale: [1, 1, 1], gyroScale: [1, 1, 1],   // per-axis scale factor errors (real phones: ~0.5–2%)
   jitter: 0, seed: 1,
 };
 
@@ -89,8 +90,8 @@ export function generate(opts = {}) {
     last = t;
     const tr = truth(t);
     const s = { t };
-    ['ax', 'ay', 'az'].forEach((k, j) => { s[k] = tr.fdev[j] + o.accBias[j] + (o.accNoise ? o.accNoise * gaussian(rand) : 0); });
-    ['gx', 'gy', 'gz'].forEach((k, j) => { s[k] = tr.omega[j] + o.gyroBias[j] + (o.gyroNoise ? o.gyroNoise * gaussian(rand) : 0); });
+    ['ax', 'ay', 'az'].forEach((k, j) => { s[k] = tr.fdev[j] * o.accScale[j] + o.accBias[j] + (o.accNoise ? o.accNoise * gaussian(rand) : 0); });
+    ['gx', 'gy', 'gz'].forEach((k, j) => { s[k] = tr.omega[j] * o.gyroScale[j] + o.gyroBias[j] + (o.gyroNoise ? o.gyroNoise * gaussian(rand) : 0); });
     all.push(s);
   }
   const calibSamples = all.filter((s) => s.t < recStart);

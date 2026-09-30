@@ -10,8 +10,10 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4p
 <div id="summary">running...</div>
 <table><thead><tr><th>Case</th><th>Expected (mm)</th><th>Got (mm)</th><th>Error per axis (mm)</th><th>Tolerance</th><th>Extra</th><th>Result</th></tr></thead><tbody id="rows"></tbody></table>
 <script type="module">
-import { processRecording } from '../processing.js';
-import { generate, G } from './synth.js';
+// Cache-busted so edits to the modules are always picked up on reload.
+const v = Date.now();
+const { processRecording } = await import(`../processing.js?v=${v}`);
+const { generate, G } = await import(`./synth.js?v=${v}`);
 
 const REAL = { accNoise: 0.02, accBias: [0.02, -0.015, 0.03], gyroNoise: 0.002, gyroBias: [0.003, -0.002, 0.004] };
 const D0 = [-0.02, 1.5, 0.75];
@@ -114,6 +116,11 @@ try {
   }
   multi('9a Vertical lift D=(0,0,0.5) realistic', { ...REAL, D: [0, 0, 0.5], rotDeg: 30, moveSec: 3 }, 60);
   multi('9b Sideways D=(0.8,0,0) realistic', { ...REAL, D: [0.8, 0, 0], rotDeg: 30, moveSec: 3 }, 60);
+  // Real-phone errors: accel/gyro scale factors make rotated gravity leave ~0.1–0.3 m/s² of
+  // residual once the phone has turned, which must not be mistaken for motion at the end hold.
+  const SCALE = { accScale: [1.012, 0.988, 1.015], gyroScale: [1.02, 0.985, 1.01] };
+  multi('10a Boot->roof, scale errors, rot90, 4s', { ...REAL, ...SCALE, D: [0.05, 0.25, 0.6], rotDeg: 90, rotAxis: [1, 0.2, 0.1], moveSec: 4 }, 80);
+  multi('10b Long reach, scale errors, rot60, 4s', { ...REAL, ...SCALE, D: D0, rotDeg: 60, moveSec: 4 }, 100);
 } catch (e) {
   add({ name: 'EXCEPTION', expected: '', got: String((e && e.stack) || e), errText: '', tol: '', status: 'FAIL' });
 }

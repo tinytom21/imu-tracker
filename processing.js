@@ -12,6 +12,7 @@ const STILL_ACC = 0.1;    // m/s^2 smoothed world linear acceleration still coun
 const STILL_GYRO = 0.05;  // rad/s smoothed, bias-corrected
 const SMOOTH_S = 0.15;    // window for the motion detector
 const MARGIN_S = 0.3;     // integrate slightly beyond detected motion edges
+const VAR_WIN_S = 0.3;    // window for the accel-spread stillness test
 
 // ---------- small vector / quaternion helpers ----------
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -122,8 +123,25 @@ function smooth(samples, vecs, win) {
   return out;
 }
 
-// Motion is judged on world-frame linear acceleration (gravity removed using the
-// gyro-tracked attitude) so horizontal moves are seen as clearly as vertical ones.
+// Orientation-independent stillness: a still phone gives a constant accelerometer vector
+// (whatever its attitude or scale errors) and ~zero bias-corrected gyro. Judged on the local
+// spread of the raw accel vector over a short window plus smoothed gyro rate.
+function stillFlags(samples, cal) {
+  const a = samples.map(acc);
+  const mean = smooth(samples, a, VAR_WIN_S);
+  const sq = smooth(samples, a.map((v) => [v[0] * v[0], v[1] * v[1], v[2] * v[2]]), VAR_WIN_S);
+  const g = smooth(samples, samples.map((s) => sub(gyr(s), cal.gyroBias)), SMOOTH_S);
+  const thrA = Math.max(0.06, 2.5 * cal.accStd);
+  const thrG = Math.max(0.03, 2.5 * cal.gyroStd + 0.01);
+  return a.map((_, i) => {
+    const varSum = sq[i][0] - mean[i][0] ** 2 + sq[i][1] - mean[i][1] ** 2 + sq[i][2] - mean[i][2] ** 2;
+    return Math.sqrt(Math.max(0, varSum)) < thrA && norm(g[i]) < thrG;
+  });
+}
+
+// World-frame linear acceleration (gravity removed with the gyro-tracked attitude) sees the
+// first instant of motion, even a slow slide. Only trusted for finding the START of motion:
+// after the phone has turned, sensor scale errors leave residual gravity that looks like motion.
 function movingFlags(samples, linAccW, gyroBias) {
   const a = smooth(samples, linAccW, SMOOTH_S);
   const g = smooth(samples, samples.map((s) => sub(gyr(s), gyroBias)), SMOOTH_S);
@@ -166,8 +184,12 @@ export function processRecording(calibSamples, samples) {
   // Detect the motion window from uncorrected world-frame linear acceleration + gyro.
   const linAccW = samples.map((s, i) => sub(qRotate(q[i], acc(s)), [0, 0, cal.gMag]));
   const moving = movingFlags(samples, linAccW, cal.gyroBias);
-  let iFirst = moving.indexOf(true);
-  let iLast = moving.lastIndexOf(true);
+  const still = stillFlags(samples, cal);
+  const firstA = moving.indexOf(true);
+  const firstB = still.indexOf(false);
+  let iFirst = firstA < 0 ? firstB : firstB < 0 ? firstA : Math.min(firstA, firstB);
+  let iLast = still.lastIndexOf(false);
+  if (iFirst >= 0 && iLast < iFirst) iLast = n - 1; // start detected but never judged unstill
 
   if (iFirst < 0) {
     return { cal, still: true, delta: [0, 0, 0], path: [{ t: 0, p: [0, 0, 0] }], motionStart: 0, motionEnd: 0,
@@ -182,28 +204,44 @@ export function processRecording(calibSamples, samples) {
   const endHold = tEnd - samples[iLast].t;
   if (endHold < 0.5) warnings.push('Phone was not held still before Stop — end-of-move correction is weak.');
 
-  // 2. Tilt correction: at the end hold the rotated specific force must point straight up.
-  //    Any mismatch is gyro drift; spread its correction linearly over the move.
+  // 2. End-hold correction: once still again, the rotated specific force must point straight
+  //    up with the same size as gravity. Any tilt mismatch (gyro scale error) or magnitude
+  //    mismatch (accel scale error) is caused by the phone turning, so it is phased in
+  //    according to how much of the total rotation has happened, not by elapsed time.
+  const span = samples[iLast].t - samples[iFirst].t;
+  const fracT = (i) => (i <= iFirst ? 0 : i >= iLast ? 1 : (samples[i].t - samples[iFirst].t) / span);
+  const rotCum = new Array(n).fill(0);
+  for (let i = iFirst + 1; i <= iLast; i++) {
+    const dt = samples[i].t - samples[i - 1].t;
+    rotCum[i] = rotCum[i - 1] + norm(sub(gyr(samples[i]), cal.gyroBias)) * dt;
+  }
+  for (let i = iLast + 1; i < n; i++) rotCum[i] = rotCum[iLast];
+  const rotTotal = rotCum[iLast];
+  const fracR = rotTotal > 5 * Math.PI / 180 ? (i) => rotCum[i] / rotTotal : fracT;
+
   let tilt = 0;
   let tiltAxis = [0, 0, 1];
+  let gMagEnd = cal.gMag;
   const endStill = samples.slice(iLast + 1);
   if (endStill.length >= 5) {
-    const gEndW = unit(qRotate(q[n - 1], meanStd(endStill, acc).mean));
+    const aEnd = meanStd(endStill, acc).mean;
+    gMagEnd = norm(aEnd);
+    const gEndW = unit(qRotate(q[n - 1], aEnd));
     const c = cross(gEndW, [0, 0, 1]);
     tilt = Math.atan2(norm(c), gEndW[2]);
     tiltAxis = c;
   }
-  const span = samples[iLast].t - samples[iFirst].t;
-  const frac = (i) => (i <= iFirst ? 0 : i >= iLast ? 1 : (samples[i].t - samples[iFirst].t) / span);
 
   // 3. World-frame linear acceleration.
   const aw = new Array(n);
   for (let i = 0; i < n; i++) {
+    const f = fracR(i);
     let qi = q[i];
-    if (tilt > 0) qi = qMul(qFromAxisAngle(tiltAxis, tilt * frac(i)), qi);
+    if (tilt > 0) qi = qMul(qFromAxisAngle(tiltAxis, tilt * f), qi);
     const a = qRotate(qi, acc(samples[i]));
-    aw[i] = [a[0], a[1], a[2] - cal.gMag];
+    aw[i] = [a[0], a[1], a[2] - (cal.gMag + (gMagEnd - cal.gMag) * f)];
   }
+  const frac = fracT;
 
   // 4. Integrate velocity over the motion window only (outside it the phone is still).
   const v = new Array(n).fill(null).map(() => [0, 0, 0]);
