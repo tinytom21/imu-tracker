@@ -15,7 +15,7 @@ const el = {
   banner: $('banner'), idle: $('idle'), calib: $('calib'), rec: $('rec'), result: $('result'),
   main: $('main'), calibMsg: $('calibMsg'), calibBar: $('calibBar'), calibNote: $('calibNote'),
   recStatus: $('recStatus'), recTime: $('recTime'), recRate: $('recRate'), recNote: $('recNote'),
-  rows: $('rows'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
+  rows: $('rows'), compare: $('compare'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
   dl: $('dl'), csv: $('csv'),
 };
 
@@ -184,6 +184,15 @@ function showResult(calib, rec, source) {
     showError('Processing failed: ' + e.message);
     return;
   }
+  const hasQ = rec.length > 0 && rec.every((s) => s.qw != null);
+  let fused = null, fusedErr = null;
+  if (hasQ) {
+    try {
+      fused = processRecording(calib, rec, { orientation: 'fused' });
+    } catch (e) {
+      fusedErr = e.message || String(e);
+    }
+  }
   el.dl.disabled = false;
   el.result.hidden = false;
 
@@ -197,11 +206,45 @@ function showResult(calib, rec, source) {
   }
   el.total.innerHTML = `Straight-line distance: <b>${mm(Math.hypot(x, y, z))} mm</b>`;
 
+  // comparison of methods
+  el.compare.innerHTML = '';
+  if (fused) {
+    const cell = (tag, text) => { const c = document.createElement(tag); c.textContent = text; return c; };
+    const table = document.createElement('table');
+    table.className = 'cmp-table';
+    const head = table.createTHead().insertRow();
+    for (const h of ['Method', 'X', 'Y', 'Z']) head.appendChild(cell('th', h));
+    const body = table.createTBody();
+    for (const [name, r] of [['Gyro (app)', res], ['Phone fusion', fused]]) {
+      const row = body.insertRow();
+      row.appendChild(cell('th', name));
+      for (const v of r.delta) row.appendChild(cell('td', signed(v)));
+    }
+    const cap = document.createElement('div');
+    cap.className = 'cmp-unit';
+    cap.textContent = 'mm';
+    el.compare.append(table, cap);
+  } else {
+    const p = document.createElement('p');
+    p.className = 'cmp-note';
+    p.textContent = hasQ
+      ? 'Phone fusion failed: ' + fusedErr
+      : 'Phone fusion: not available on this device/browser';
+    el.compare.appendChild(p);
+  }
+
   const q = res.quality;
   el.badge.textContent = q.level;
   el.badge.className = 'badge ' + q.level;
   el.warnings.innerHTML = '';
-  for (const w of q.warnings) {
+  const shown = new Set(q.warnings);
+  const warnList = [...q.warnings];
+  if (fused) {
+    for (const w of fused.quality.warnings) {
+      if (!shown.has(w)) { shown.add(w); warnList.push('Phone fusion: ' + w); }
+    }
+  }
+  for (const w of warnList) {
     const li = document.createElement('li');
     li.textContent = w;
     el.warnings.appendChild(li);
@@ -216,6 +259,7 @@ function showResult(calib, rec, source) {
     ['Drift corrected', drift.toFixed(3) + ' m/s'],
     ['Tilt correction', (res.tiltCorrectionDeg ?? 0).toFixed(2) + '°'],
     ['Forward axis', res.cal.forwardAxis],
+    ['Orientation sensor', hasQ ? 'yes' : 'no'],
     ['App version', window.APP_VERSION || '?'],
   ];
   el.details.innerHTML = '';
@@ -224,15 +268,18 @@ function showResult(calib, rec, source) {
     const dd = document.createElement('dd'); dd.textContent = v;
     el.details.append(dt, dd);
   }
-  viz?.update(res.path);
+  viz?.update(res.path, fused ? fused.path : null);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ---------------------------------------------------------------- CSV
 function toCsv(calib, rec) {
-  const lines = ['phase,t,ax,ay,az,gx,gy,gz'];
+  const lines = ['phase,t,ax,ay,az,gx,gy,gz,qx,qy,qz,qw'];
+  const q = (v) => (v == null ? '' : v);
   for (const [phase, arr] of [['calib', calib], ['rec', rec]]) {
-    for (const s of arr) lines.push([phase, s.t, s.ax, s.ay, s.az, s.gx, s.gy, s.gz].join(','));
+    for (const s of arr) {
+      lines.push([phase, s.t, s.ax, s.ay, s.az, s.gx, s.gy, s.gz, q(s.qx), q(s.qy), q(s.qz), q(s.qw)].join(','));
+    }
   }
   return lines.join('\n') + '\n';
 }
@@ -243,11 +290,19 @@ function parseCsv(text) {
   const want = ['phase', 't', 'ax', 'ay', 'az', 'gx', 'gy', 'gz'];
   if (!head || want.some((w) => !head.includes(w))) throw new Error('CSV header must be: ' + want.join(','));
   const idx = Object.fromEntries(want.map((w) => [w, head.indexOf(w)]));
+  const qidx = Object.fromEntries(['qx', 'qy', 'qz', 'qw'].map((w) => [w, head.indexOf(w)]));
   const calib = [], rec = [];
   lines.forEach((line, i) => {
     const c = line.split(',');
     const s = { t: +c[idx.t], ax: +c[idx.ax], ay: +c[idx.ay], az: +c[idx.az], gx: +c[idx.gx], gy: +c[idx.gy], gz: +c[idx.gz] };
     if (Object.values(s).some((v) => !Number.isFinite(v))) throw new Error(`Bad number on CSV line ${i + 2}`);
+    // Optional quaternion columns: all four must be present and finite, else null.
+    const qv = ['qx', 'qy', 'qz', 'qw'].map((k) => {
+      const raw = qidx[k] >= 0 ? (c[qidx[k]] ?? '').trim() : '';
+      return raw === '' ? null : +raw;
+    });
+    const qOk = qv.every((v) => v !== null && Number.isFinite(v));
+    [s.qx, s.qy, s.qz, s.qw] = qOk ? qv : [null, null, null, null];
     const phase = c[idx.phase].trim();
     if (phase === 'calib') calib.push(s);
     else if (phase === 'rec') rec.push(s);
@@ -289,6 +344,6 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && (state === 'calibrating' || state === 'recording')) acquireWakeLock();
 });
 setState('idle');
-createViz({ view3d: $('view3d'), plotTop: $('plotTop'), plotSide: $('plotSide') })
+createViz({ view3d: $('view3d'), plotTop: $('plotTop'), plotSide: $('plotSide'), legend: $('legend') })
   .then((v) => { viz = v; })
   .catch((e) => showError('Visualisation failed: ' + e.message));

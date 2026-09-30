@@ -17,7 +17,9 @@ function bounds(points) {
 }
 
 // ---------------------------------------------------------------- 2D plots
-function drawPlot(canvas, points, hAxis, vAxis, hName, vName) {
+const FUSED_HEX = 0xe040fb, FUSED_CSS = '#e040fb';
+
+function drawPlot(canvas, points, points2, hAxis, vAxis, hName, vName) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth, H = canvas.clientHeight;
   if (!W || !H) return;
@@ -29,7 +31,8 @@ function drawPlot(canvas, points, hAxis, vAxis, hName, vName) {
 
   const pts = points.map((p) => [p[hAxis], p[vAxis]]);
   const start = pts[0], end = pts[pts.length - 1];
-  const b = bounds(pts.map((p) => [p[0], p[1], 0]));
+  const pts2 = points2 ? points2.map((p) => [p[hAxis], p[vAxis]]) : null;
+  const b = bounds([...pts, ...(pts2 || [])].map((p) => [p[0], p[1], 0]));
   const padL = 26, padR = 12, padT = 12, padB = 24;
   const aw = W - padL - padR, ah = H - padT - padB;
   const spanH = Math.max(b.max[0] - b.min[0], 0.05), spanV = Math.max(b.max[1] - b.min[1], 0.05);
@@ -51,8 +54,19 @@ function drawPlot(canvas, points, hAxis, vAxis, hName, vName) {
   pts.forEach((p, i) => (i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))));
   ctx.stroke();
 
-  const dot = (p, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 5, 0, 7); ctx.fill(); };
+  if (pts2 && pts2.length) {
+    ctx.strokeStyle = FUSED_CSS; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    pts2.forEach((p, i) => (i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))));
+    ctx.stroke();
+  }
+
+  const dot = (p, color, r = 5) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), r, 0, 7); ctx.fill(); };
   dot(start, '#22c55e'); dot(end, '#ef4444');
+  if (pts2 && pts2.length) {
+    const e2 = pts2[pts2.length - 1];
+    dot(e2, '#ffffff', 5); dot(e2, FUSED_CSS, 3.5);
+  }
 
   // axis labels
   ctx.fillStyle = text; ctx.font = '600 12px system-ui, sans-serif';
@@ -117,7 +131,7 @@ async function create3D(container) {
     camera.updateProjectionMatrix();
   }
 
-  function update(points) {
+  function update(points, points2) {
     if (content) {
       scene.remove(content);
       content.traverse((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
@@ -126,7 +140,7 @@ async function create3D(container) {
     scene.add(content);
 
     // Bounds always include the origin so the axes are inside the frame.
-    const b = bounds([[0, 0, 0], ...points]);
+    const b = bounds([[0, 0, 0], ...points, ...(points2 || [])]);
     const size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2], 0.1);
     const centre = new THREE.Vector3(...[0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2));
 
@@ -163,6 +177,13 @@ async function create3D(container) {
       m.position.copy(p); content.add(m);
     };
     ball(vs[0], 0x22c55e); ball(vs[vs.length - 1], 0xef4444);
+    if (points2 && points2.length) {
+      const vs2 = points2.map((p) => new THREE.Vector3(...p));
+      content.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(vs2),
+        new THREE.LineBasicMaterial({ color: FUSED_HEX })));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r * 0.75, 16, 12), new THREE.MeshBasicMaterial({ color: FUSED_HEX }));
+      m.position.copy(vs2[vs2.length - 1]); content.add(m);
+    }
     const dashed = new THREE.Line(new THREE.BufferGeometry().setFromPoints([vs[0], vs[vs.length - 1]]),
       new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: size * 0.03, gapSize: size * 0.02 }));
     dashed.computeLineDistances();
@@ -186,32 +207,35 @@ async function create3D(container) {
 
 // ---------------------------------------------------------------- public API
 /**
- * @param {{view3d:HTMLElement, plotTop:HTMLCanvasElement, plotSide:HTMLCanvasElement}} els
- * @returns {Promise<{update:(path:Array)=>void}>} path = processRecording().path
+ * @param {{view3d:HTMLElement, plotTop:HTMLCanvasElement, plotSide:HTMLCanvasElement, legend?:HTMLElement}} els
+ * @returns {Promise<{update:(path:Array, path2?:Array|null)=>void}>} path = processRecording().path
  */
-export async function createViz({ view3d, plotTop, plotSide }) {
+export async function createViz({ view3d, plotTop, plotSide, legend }) {
   let points = [[0, 0, 0]];
+  let points2 = null;
   let v3 = null;
 
   const draw2D = () => {
-    drawPlot(plotTop, points, 0, 1, 'X', 'Y');
-    drawPlot(plotSide, points, 1, 2, 'Y', 'Z');
+    drawPlot(plotTop, points, points2, 0, 1, 'X', 'Y');
+    drawPlot(plotSide, points, points2, 1, 2, 'Y', 'Z');
   };
   new ResizeObserver(draw2D).observe(plotTop);
   new ResizeObserver(draw2D).observe(plotSide);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw2D);
 
-  const ready = create3D(view3d).then((v) => { v3 = v; v3.update(points); }).catch((e) => {
+  const ready = create3D(view3d).then((v) => { v3 = v; v3.update(points, points2); }).catch((e) => {
     console.error(e);
     view3d.textContent = '3D view unavailable (could not load three.js): ' + e.message;
   });
 
   return {
     ready,
-    update(path) {
+    update(path, path2) {
       points = path.length ? path.map((s) => s.p) : [[0, 0, 0]];
+      points2 = path2 && path2.length ? path2.map((s) => s.p) : null;
+      if (legend) legend.hidden = !points2;
       draw2D();
-      if (v3) v3.update(points);
+      if (v3) v3.update(points, points2);
     },
   };
 }

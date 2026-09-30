@@ -15,6 +15,8 @@ const MARGIN_S = 0.3;     // integrate slightly beyond detected motion edges
 const VAR_WIN_S = 0.3;    // window for the accel-spread stillness test
 const MERGE_GAP_S = 0.4;  // pauses shorter than this don't split a move
 const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the move
+const KNOCK_ACC = 6;      // m/s^2 spike near the end of the move = phone knocked onto the surface
+const KNOCK_WIN_S = 0.6;
 
 // ---------- small vector / quaternion helpers ----------
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -165,7 +167,7 @@ function movingFlags(samples, linAccW, gyroBias) {
  * @param {Array} calibSamples stationary samples captured before Start
  * @param {Array} samples recorded samples (start hold -> move -> end hold)
  */
-export function processRecording(calibSamples, samples) {
+export function processRecording(calibSamples, samples, opts = {}) {
   const cal = calibrate(calibSamples);
   const warnings = [];
   let n = samples.length;
@@ -183,6 +185,26 @@ export function processRecording(calibSamples, samples) {
                          samples[i].gz + samples[i - 1].gz], 0.5), cal.gyroBias);
     const angle = norm(w) * dt;
     q[i] = qNormalize(qMul(q[i - 1], qFromAxisAngle(w, angle)));
+  }
+
+  // Optionally replace the attitude with the phone's own sensor fusion (RelativeOrientationSensor),
+  // which runs on the full-rate, unrounded gyro. Only its rotation relative to the first sample is
+  // used, applied to our gravity-derived start attitude, so its arbitrary heading doesn't matter.
+  let fusedConvention = null;
+  if (opts.orientation === 'fused') {
+    if (!samples.every((s) => s.qw != null && s.qx != null)) throw new Error('No phone orientation data in this recording.');
+    const qf = samples.map((s) => qNormalize([s.qw, s.qx, s.qy, s.qz]));
+    const conj = (a) => [a[0], -a[1], -a[2], -a[3]];
+    // The sensor quaternion may map device->reference or reference->device; pick whichever
+    // agrees with the gyro-integrated attitude.
+    const candA = qf.map((f) => qMul(cal.q0, qMul(conj(qf[0]), f)));
+    const candB = qf.map((f) => qMul(cal.q0, qMul(qf[0], conj(f))));
+    const angleBetween = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])));
+    let errA = 0, errB = 0;
+    for (let i = 0; i < n; i++) { errA += angleBetween(candA[i], q[i]); errB += angleBetween(candB[i], q[i]); }
+    fusedConvention = errA <= errB ? 'A' : 'B';
+    const cand = fusedConvention === 'A' ? candA : candB;
+    for (let i = 0; i < n; i++) q[i] = cand[i];
   }
 
   // Detect the motion window from uncorrected world-frame linear acceleration + gyro.
@@ -209,6 +231,16 @@ export function processRecording(calibSamples, samples) {
   }
   let iFirst = real[0].a;
   let iLast = real[real.length - 1].b;
+
+  // A knock when the phone is set down is too brief to be sampled properly, so its velocity
+  // change is lost and the end-of-move correction then spreads that error over the whole move.
+  let knock = 0;
+  for (let i = iLast; i >= 0 && samples[i].t >= samples[iLast].t - KNOCK_WIN_S; i--) {
+    knock = Math.max(knock, Math.abs(norm(acc(samples[i])) - cal.gMag));
+  }
+  if (knock > KNOCK_ACC) {
+    warnings.push(`Phone was set down with a knock (${knock.toFixed(1)} m/s²) — stop just above the surface and set it down gently.`);
+  }
   // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
   while (iFirst > 0 && moving[iFirst - 1]) iFirst--;
 
@@ -265,7 +297,7 @@ export function processRecording(calibSamples, samples) {
     const a = qRotate(qi, acc(samples[i]));
     aw[i] = [a[0], a[1], a[2] - (cal.gMag + (gMagEnd - cal.gMag) * f)];
   }
-  const frac = fracT;
+  const frac = opts.zupt === 'rotation' ? fracR : fracT;
 
   // 4. Integrate velocity over the motion window only (outside it the phone is still).
   const v = new Array(n).fill(null).map(() => [0, 0, 0]);
@@ -294,12 +326,12 @@ export function processRecording(calibSamples, samples) {
 
   const duration = span;
   if (duration > 8) warnings.push(`Move took ${duration.toFixed(1)} s — drift grows fast with time; aim for under 5 s.`);
-  const quality = grade(cal, { endHold, duration, endVel: norm(vEnd), tilt }, warnings);
+  const quality = grade(cal, { endHold, duration, endVel: norm(vEnd), tilt, knock }, warnings);
 
   return { cal, still: false, delta: p, path, quality,
            motionStart: samples[iFirst].t - t0, motionEnd: samples[iLast].t - t0,
            endVelocityCorrected: vEnd, tiltCorrectionDeg: tilt * 180 / Math.PI,
-           sampleRate: (n - 1) / (tEnd - t0) };
+           sampleRate: (n - 1) / (tEnd - t0), knock, orientation: opts.orientation || 'gyro', fusedConvention };
 }
 
 function grade(cal, m, warnings) {
@@ -309,6 +341,7 @@ function grade(cal, m, warnings) {
   if (m.duration > 8) score += 2; else if (m.duration > 5) score += 1;
   if (m.endVel > 0.5) { score += 2; warnings.push(`Large drift corrected (${m.endVel.toFixed(2)} m/s).`); }
   else if (m.endVel > 0.2) score += 1;
+  if (m.knock > KNOCK_ACC) score += 2;
   if (m.tilt * 180 / Math.PI > 3) { score += 1; warnings.push(`Gyro drift of ${(m.tilt * 180 / Math.PI).toFixed(1)}° corrected.`); }
   const level = score === 0 ? 'good' : score <= 2 ? 'fair' : 'poor';
   return { level, score, endHold: m.endHold, duration: m.duration, endVel: m.endVel, warnings };

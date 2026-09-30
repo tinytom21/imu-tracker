@@ -23,7 +23,7 @@ const f1 = (x) => x.toFixed(1);
 
 function run(opts) {
   const g = generate(opts);
-  const r = processRecording(g.calibSamples, g.samples);
+  const r = processRecording(g.calibSamples, g.samples, opts.proc);
   const D = g.opts.D;
   const err = r.delta.map((x, i) => Math.abs(x - D[i]) * 1000);
   return { g, r, D, err };
@@ -125,6 +125,12 @@ try {
   const PHONE = { ...REAL, ...SCALE, rate: 54, jitter: 0.2, quantize: true, startBump: true, stopTap: true };
   multi('11a Floor->table, S23 Chrome artifacts', { ...PHONE, D: [0.05, 0.4, 0.6], rotDeg: 40, moveSec: 3 }, 80);
   multi('11b Boot->roof, S23 Chrome artifacts', { ...PHONE, D: [0.05, 0.25, 0.6], rotDeg: 90, rotAxis: [1, 0.2, 0.1], moveSec: 4 }, 100);
+  // Phone-fusion orientation mode (both quaternion conventions), with bigger gyro scale errors
+  // that the app's own gyro integration can't see but the phone's fusion has calibrated out.
+  const BADGYRO = { ...PHONE, gyroScale: [1.04, 0.96, 1.03], fused: true, fusedErrDeg: 0.1 };
+  multi('12a Fused orientation, convention A', { ...BADGYRO, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 80);
+  multi('12b Fused orientation, convention B', { ...BADGYRO, fusedConvention: 'B', D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 80);
+  multi('12c Same data, gyro mode (for comparison)', { ...BADGYRO, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4 }, 1e9);
 } catch (e) {
   add({ name: 'EXCEPTION', expected: '', got: String((e && e.stack) || e), errText: '', tol: '', status: 'FAIL' });
 }

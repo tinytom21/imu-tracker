@@ -1,6 +1,6 @@
 // Sensor capture: Generic Sensor API (Accelerometer + Gyroscope) with a
 // devicemotion fallback. Emits merged samples:
-// { t (s), ax, ay, az (m/s^2, incl. gravity), gx, gy, gz (rad/s) }
+// { t (s), ax, ay, az (m/s^2, incl. gravity), gx, gy, gz (rad/s), qx, qy, qz, qw (or null) }
 
 const NO_SENSOR_MSG = 'No motion sensors — open this on a phone over HTTPS';
 const FIRST_SAMPLE_TIMEOUT_MS = 1500;
@@ -15,6 +15,7 @@ export class Capture {
     this.onError = onError || (() => {});
     this.source = null;        // 'generic-sensor' | 'devicemotion' | null
     this.sampleRate = 0;       // measured Hz
+    this.hasOrientation = false; // true once a quaternion reading has arrived
     this._stops = [];
     this._times = [];          // recent timestamps for rate measurement
     this._running = false;
@@ -37,6 +38,7 @@ export class Capture {
     this._running = true;
     this._times = [];
     this.sampleRate = 0;
+    this.hasOrientation = false;
 
     let genericError = null;
     if (typeof Accelerometer !== 'undefined' && typeof Gyroscope !== 'undefined') {
@@ -118,6 +120,29 @@ export class Capture {
       const gyr = new Gyroscope({ frequency: 200, referenceFrame: 'device' });
       let g0 = null, g1 = null; // last two gyro readings {t,x,y,z}
 
+      // Hardware-fused orientation (optional; must never break capture).
+      let quat = null;
+      if (typeof RelativeOrientationSensor !== 'undefined') {
+        try {
+          const ori = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'device' });
+          ori.addEventListener('reading', () => {
+            const q = ori.quaternion;
+            if (q && q.length >= 4) {
+              quat = [q[0], q[1], q[2], q[3]];
+              this.hasOrientation = true;
+            }
+          });
+          ori.addEventListener('error', (ev) => {
+            console.warn('RelativeOrientationSensor error:', ev.error || ev);
+            quat = null;
+          });
+          ori.start();
+          this._stops.push(() => { try { ori.stop(); } catch { /* */ } });
+        } catch (e) {
+          console.warn('RelativeOrientationSensor unavailable:', e);
+        }
+      }
+
       gyr.addEventListener('reading', () => {
         g0 = g1;
         g1 = { t: gyr.timestamp / 1000, x: gyr.x, y: gyr.y, z: gyr.z };
@@ -130,7 +155,11 @@ export class Capture {
           const f = (t - g0.t) / (g1.t - g0.t);
           g = { x: g0.x + (g1.x - g0.x) * f, y: g0.y + (g1.y - g0.y) * f, z: g0.z + (g1.z - g0.z) * f };
         }
-        this._emit({ t, ax: acc.x, ay: acc.y, az: acc.z, gx: g.x, gy: g.y, gz: g.z });
+        this._emit({
+          t, ax: acc.x, ay: acc.y, az: acc.z, gx: g.x, gy: g.y, gz: g.z,
+          qx: quat ? quat[0] : null, qy: quat ? quat[1] : null,
+          qz: quat ? quat[2] : null, qw: quat ? quat[3] : null,
+        });
         ok();
       });
       const onErr = (ev) => fail(ev.error || new Error('Sensor error'));
@@ -160,6 +189,7 @@ export class Capture {
           t: e.timeStamp / 1000,
           ax: flip * a.x, ay: flip * a.y, az: flip * a.z,
           gx: r.beta * DEG, gy: r.gamma * DEG, gz: r.alpha * DEG,
+          qx: null, qy: null, qz: null, qw: null,
         });
         ok();
       };

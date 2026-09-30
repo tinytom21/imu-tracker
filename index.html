@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>IMU Tracker</title>
-  <link rel="stylesheet" href="style.css?v=0.4">
+  <link rel="stylesheet" href="style.css?v=0.5">
   <script type="importmap">
   {
     "imports": {
@@ -22,10 +22,11 @@
 
     <section id="idle" class="panel">
       <ol class="steps">
-        <li>Point the <b>top of the phone</b> toward the direction you want to call <b>+Y</b> (e.g. the front of the car).</li>
-        <li>Press <b>Start</b> and hold the phone completely still until told to move.</li>
+        <li>Place the phone <b>flat</b> and line it up against a straight edge (table edge, box, ruler), with the <b>top of the phone</b> pointing the way you want to call <b>+Y</b>.</li>
+        <li>Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.</li>
         <li>Move smoothly, ideally in under 5&nbsp;s.</li>
-        <li>At the destination hold it still for ~2&nbsp;s, then press <b>Stop</b>.</li>
+        <li>Stop just above the destination, then set it down <b>gently</b>. Don't let it knock onto the surface.</li>
+        <li>Leave it still for ~2&nbsp;s, then press <b>Stop</b>.</li>
       </ol>
     </section>
 
@@ -46,12 +47,17 @@
     <section id="result" hidden>
       <div class="panel">
         <div class="rows" id="rows"></div>
+        <div class="compare" id="compare"></div>
         <div class="total" id="total"></div>
         <div class="badge-line"><span id="badge" class="badge">good</span></div>
         <ul id="warnings" class="warnings"></ul>
         <dl id="details" class="details"></dl>
       </div>
       <div class="panel viz">
+        <div id="legend" class="legend" hidden>
+          <span><i class="sw" style="background:#ffc933"></i>Gyro</span>
+          <span><i class="sw" style="background:#e040fb"></i>Phone fusion</span>
+        </div>
         <div id="view3d" class="view3d"></div>
         <div class="plots">
           <figure><canvas id="plotTop"></canvas><figcaption>Top view (X → , Y ↑)</figcaption></figure>

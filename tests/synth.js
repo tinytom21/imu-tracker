@@ -92,6 +92,14 @@ export function generate(opts = {}) {
     const s = { t };
     ['ax', 'ay', 'az'].forEach((k, j) => { s[k] = tr.fdev[j] * o.accScale[j] + o.accBias[j] + (o.accNoise ? o.accNoise * gaussian(rand) : 0); });
     ['gx', 'gy', 'gz'].forEach((k, j) => { s[k] = tr.omega[j] * o.gyroScale[j] + o.gyroBias[j] + (o.gyroNoise ? o.gyroNoise * gaussian(rand) : 0); });
+    // Phone sensor-fusion orientation: true attitude in a reference frame with arbitrary heading,
+    // with a small error, in either quaternion convention. Emitted in Generic Sensor field names.
+    if (o.fused) {
+      let f = qMul(qAxisAngle([0, 0, 1], o.fusedHeading ?? 1.1), tr.q);
+      if (o.fusedErrDeg) f = qMul(f, qAxisAngle([gaussian(rand), gaussian(rand), gaussian(rand)], o.fusedErrDeg * Math.PI / 180));
+      if (o.fusedConvention === 'B') f = qInv(f);
+      [s.qw, s.qx, s.qy, s.qz] = f;
+    }
     all.push(s);
   }
   // Real-phone artifacts seen in recordings: a short buzz just after recording starts, and the
