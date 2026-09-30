@@ -13,6 +13,8 @@ const STILL_GYRO = 0.05;  // rad/s smoothed, bias-corrected
 const SMOOTH_S = 0.15;    // window for the motion detector
 const MARGIN_S = 0.3;     // integrate slightly beyond detected motion edges
 const VAR_WIN_S = 0.3;    // window for the accel-spread stillness test
+const MERGE_GAP_S = 0.4;  // pauses shorter than this don't split a move
+const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the move
 
 // ---------- small vector / quaternion helpers ----------
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -83,7 +85,8 @@ export function stillnessOf(samples) {
   const a = meanStd(samples, acc);
   const g = meanStd(samples, gyr);
   const gyroMag = norm(g.mean) + g.std;
-  return { still: a.std < 0.08 && gyroMag < 0.05, accStd: a.std, gyroMag };
+  // Chrome rounds accel to 0.1 m/s^2, so a phone lying still already shows ~0.06 spread.
+  return { still: a.std < 0.1 && gyroMag < 0.05, accStd: a.std, gyroMag };
 }
 
 // Calibrate from stationary samples: gravity direction/magnitude, gyro bias, initial attitude.
@@ -131,7 +134,8 @@ function stillFlags(samples, cal) {
   const mean = smooth(samples, a, VAR_WIN_S);
   const sq = smooth(samples, a.map((v) => [v[0] * v[0], v[1] * v[1], v[2] * v[2]]), VAR_WIN_S);
   const g = smooth(samples, samples.map((s) => sub(gyr(s), cal.gyroBias)), SMOOTH_S);
-  const thrA = Math.max(0.06, 2.5 * cal.accStd);
+  // Floor covers Chrome's 0.1 m/s^2 rounding: a still phone can flicker by ~0.09 across 3 axes.
+  const thrA = Math.max(0.12, 2.5 * cal.accStd);
   const thrG = Math.max(0.03, 2.5 * cal.gyroStd + 0.01);
   return a.map((_, i) => {
     const varSum = sq[i][0] - mean[i][0] ** 2 + sq[i][1] - mean[i][1] ** 2 + sq[i][2] - mean[i][2] ** 2;
@@ -164,11 +168,11 @@ function movingFlags(samples, linAccW, gyroBias) {
 export function processRecording(calibSamples, samples) {
   const cal = calibrate(calibSamples);
   const warnings = [];
-  const n = samples.length;
+  let n = samples.length;
   if (n < 10) throw new Error('Not enough samples recorded.');
 
   const t0 = samples[0].t;
-  const tEnd = samples[n - 1].t;
+  let tEnd = samples[n - 1].t;
 
   // 1. Orientation: integrate bias-corrected gyro from the calibrated start attitude.
   const q = new Array(n);
@@ -185,15 +189,35 @@ export function processRecording(calibSamples, samples) {
   const linAccW = samples.map((s, i) => sub(qRotate(q[i], acc(s)), [0, 0, cal.gMag]));
   const moving = movingFlags(samples, linAccW, cal.gyroBias);
   const still = stillFlags(samples, cal);
-  const firstA = moving.indexOf(true);
-  const firstB = still.indexOf(false);
-  let iFirst = firstA < 0 ? firstB : firstB < 0 ? firstA : Math.min(firstA, firstB);
-  let iLast = still.lastIndexOf(false);
-  if (iFirst >= 0 && iLast < iFirst) iLast = n - 1; // start detected but never judged unstill
 
-  if (iFirst < 0) {
+  // Runs of non-stillness, with short still gaps merged. Brief blips are not the move: on a
+  // real phone they are the tap on Stop, or a bump when recording starts.
+  const runs = [];
+  for (let i = 0; i < n; i++) {
+    if (still[i]) continue;
+    let j = i;
+    while (j + 1 < n && !still[j + 1]) j++;
+    const prev = runs[runs.length - 1];
+    if (prev && samples[i].t - samples[prev.b].t < MERGE_GAP_S) prev.b = j; else runs.push({ a: i, b: j });
+    i = j;
+  }
+  const real = runs.filter((r) => samples[r.b].t - samples[r.a].t >= MIN_RUN_S);
+
+  if (!real.length) {
     return { cal, still: true, delta: [0, 0, 0], path: [{ t: 0, p: [0, 0, 0] }], motionStart: 0, motionEnd: 0,
              quality: grade(cal, { endHold: tEnd - t0, duration: 0, endVel: 0, tilt: 0 }, ['No movement detected.']) };
+  }
+  let iFirst = real[0].a;
+  let iLast = real[real.length - 1].b;
+  // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
+  while (iFirst > 0 && moving[iFirst - 1]) iFirst--;
+
+  // Drop anything after the end hold (the Stop tap) so it can't spoil the end-hold correction.
+  const tail = runs.find((r) => r.a > iLast);
+  if (tail) {
+    n = tail.a;
+    samples = samples.slice(0, n);
+    tEnd = samples[n - 1].t;
   }
 
   // Expand by a margin, clamped to the recording.
@@ -280,7 +304,7 @@ export function processRecording(calibSamples, samples) {
 
 function grade(cal, m, warnings) {
   let score = 0; // higher is worse
-  if (cal.accStd > 0.05 || cal.gyroStd > 0.03) { score += 1; warnings.push('Start hold was a bit shaky.'); }
+  if (cal.accStd > 0.1 || cal.gyroStd > 0.03) { score += 1; warnings.push('Start hold was a bit shaky.'); }
   if (m.endHold < 0.5) score += 2; else if (m.endHold < 1.5) score += 1;
   if (m.duration > 8) score += 2; else if (m.duration > 5) score += 1;
   if (m.endVel > 0.5) { score += 2; warnings.push(`Large drift corrected (${m.endVel.toFixed(2)} m/s).`); }

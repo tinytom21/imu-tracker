@@ -94,6 +94,17 @@ export function generate(opts = {}) {
     ['gx', 'gy', 'gz'].forEach((k, j) => { s[k] = tr.omega[j] * o.gyroScale[j] + o.gyroBias[j] + (o.gyroNoise ? o.gyroNoise * gaussian(rand) : 0); });
     all.push(s);
   }
+  // Real-phone artifacts seen in recordings: a short buzz just after recording starts, and the
+  // tap on Stop at the very end.
+  const buzz = (s, amp) => { s.ax += amp * gaussian(rand); s.ay += amp * gaussian(rand); s.az += amp * gaussian(rand);
+                             s.gx += amp * 0.1 * gaussian(rand); s.gy += amp * 0.1 * gaussian(rand); };
+  if (o.startBump) all.filter((s) => s.t >= recStart && s.t < recStart + 0.12).forEach((s) => buzz(s, 0.3));
+  if (o.stopTap) all.filter((s) => s.t > total - 0.05).forEach((s) => buzz(s, 0.6));
+  // Chrome rounds sensor readings (0.1 m/s^2, 0.1 deg/s) as a fingerprinting mitigation.
+  if (o.quantize) for (const s of all) {
+    for (const k of ['ax', 'ay', 'az']) s[k] = Math.round(s[k] * 10) / 10;
+    for (const k of ['gx', 'gy', 'gz']) s[k] = Math.round(s[k] / 0.0017453292519943296) * 0.0017453292519943296;
+  }
   const calibSamples = all.filter((s) => s.t < recStart);
   const samples = all.filter((s) => s.t >= recStart);
   return { calibSamples, samples, truth, opts: o, moveStart, moveEnd, recStart };

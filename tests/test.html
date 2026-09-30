@@ -121,6 +121,10 @@ try {
   const SCALE = { accScale: [1.012, 0.988, 1.015], gyroScale: [1.02, 0.985, 1.01] };
   multi('10a Boot->roof, scale errors, rot90, 4s', { ...REAL, ...SCALE, D: [0.05, 0.25, 0.6], rotDeg: 90, rotAxis: [1, 0.2, 0.1], moveSec: 4 }, 80);
   multi('10b Long reach, scale errors, rot60, 4s', { ...REAL, ...SCALE, D: D0, rotDeg: 60, moveSec: 4 }, 100);
+  // Chrome-on-S23 conditions from a real recording: ~54 Hz, 0.1 rounding, start buzz, Stop tap.
+  const PHONE = { ...REAL, ...SCALE, rate: 54, jitter: 0.2, quantize: true, startBump: true, stopTap: true };
+  multi('11a Floor->table, S23 Chrome artifacts', { ...PHONE, D: [0.05, 0.4, 0.6], rotDeg: 40, moveSec: 3 }, 80);
+  multi('11b Boot->roof, S23 Chrome artifacts', { ...PHONE, D: [0.05, 0.25, 0.6], rotDeg: 90, rotAxis: [1, 0.2, 0.1], moveSec: 4 }, 100);
 } catch (e) {
   add({ name: 'EXCEPTION', expected: '', got: String((e && e.stack) || e), errText: '', tol: '', status: 'FAIL' });
 }

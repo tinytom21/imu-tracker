@@ -135,7 +135,6 @@ function calibTick() {
     const hold = lastWindow(buf, CALIB_S);
     if (!stillnessOf(hold).still) { stillStart = null; return; } // 2 s window not clean after all
     calibSamples = hold;
-    if (navigator.vibrate) navigator.vibrate(100);
     // Top pointing nearly straight up -> forward is taken from the back of the phone.
     const n = hold.length;
     const m = [0, 0, 0];
