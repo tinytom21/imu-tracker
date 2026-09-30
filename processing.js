@@ -17,6 +17,8 @@ const MERGE_GAP_S = 0.4;  // pauses shorter than this don't split a move
 const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the move
 const KNOCK_ACC = 6;      // m/s^2 spike near the end of the move = phone knocked onto the surface
 const KNOCK_WIN_S = 0.6;
+const TRUST_WORLD_ROT = 10 * Math.PI / 180; // rotation beyond which world accel isn't used for stillness
+const FUSED_REF_S = 0.3;  // average the phone-fusion reference attitude over the still start
 
 // ---------- small vector / quaternion helpers ----------
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -107,7 +109,10 @@ export function calibrate(still) {
   const xw = cross(yw, up);
   const q0 = qFromRows([xw, yw, up]);
 
-  return { gMag, gyroBias: g.mean, q0, accStd: a.std, gyroStd: g.std, n: still.length,
+  // Chrome rounds readings to 0.1 m/s^2; native Android data is not rounded.
+  const quantized = still.every((s) => [s.ax, s.ay, s.az].every((v) => Math.abs(v * 10 - Math.round(v * 10)) < 1e-6));
+
+  return { gMag, gyroBias: g.mean, q0, accStd: a.std, gyroStd: g.std, n: still.length, quantized,
            forwardAxis: fwd[1] === 1 ? 'top' : 'back' };
 }
 
@@ -136,8 +141,9 @@ function stillFlags(samples, cal) {
   const mean = smooth(samples, a, VAR_WIN_S);
   const sq = smooth(samples, a.map((v) => [v[0] * v[0], v[1] * v[1], v[2] * v[2]]), VAR_WIN_S);
   const g = smooth(samples, samples.map((s) => sub(gyr(s), cal.gyroBias)), SMOOTH_S);
-  // Floor covers Chrome's 0.1 m/s^2 rounding: a still phone can flicker by ~0.09 across 3 axes.
-  const thrA = Math.max(0.12, 2.5 * cal.accStd);
+  // With Chrome's 0.1 m/s^2 rounding a still phone can flicker by ~0.09 across 3 axes; unrounded
+  // native data is quiet enough for a tighter floor.
+  const thrA = Math.max(cal.quantized ? 0.12 : 0.05, 2.5 * cal.accStd);
   const thrG = Math.max(0.03, 2.5 * cal.gyroStd + 0.01);
   return a.map((_, i) => {
     const varSum = sq[i][0] - mean[i][0] ** 2 + sq[i][1] - mean[i][1] ** 2 + sq[i][2] - mean[i][2] ** 2;
@@ -195,10 +201,18 @@ export function processRecording(calibSamples, samples, opts = {}) {
     if (!samples.every((s) => s.qw != null && s.qx != null)) throw new Error('No phone orientation data in this recording.');
     const qf = samples.map((s) => qNormalize([s.qw, s.qx, s.qy, s.qz]));
     const conj = (a) => [a[0], -a[1], -a[2], -a[3]];
+    // Reference = average over the still start (one sample's noise would otherwise become a
+    // constant tilt error for the whole recording).
+    const acc0 = [0, 0, 0, 0];
+    for (let i = 0; i < n && samples[i].t - t0 <= FUSED_REF_S; i++) {
+      const sgn = qf[i][0] * qf[0][0] + qf[i][1] * qf[0][1] + qf[i][2] * qf[0][2] + qf[i][3] * qf[0][3] < 0 ? -1 : 1;
+      for (let k = 0; k < 4; k++) acc0[k] += sgn * qf[i][k];
+    }
+    const ref = qNormalize(acc0);
     // The sensor quaternion may map device->reference or reference->device; pick whichever
     // agrees with the gyro-integrated attitude.
-    const candA = qf.map((f) => qMul(cal.q0, qMul(conj(qf[0]), f)));
-    const candB = qf.map((f) => qMul(cal.q0, qMul(qf[0], conj(f))));
+    const candA = qf.map((f) => qMul(cal.q0, qMul(conj(ref), f)));
+    const candB = qf.map((f) => qMul(cal.q0, qMul(ref, conj(f))));
     const angleBetween = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])));
     let errA = 0, errB = 0;
     for (let i = 0; i < n; i++) { errA += angleBetween(candA[i], q[i]); errB += angleBetween(candB[i], q[i]); }
@@ -211,6 +225,13 @@ export function processRecording(calibSamples, samples, opts = {}) {
   const linAccW = samples.map((s, i) => sub(qRotate(q[i], acc(s)), [0, 0, cal.gMag]));
   const moving = movingFlags(samples, linAccW, cal.gyroBias);
   const still = stillFlags(samples, cal);
+  // A slow slide without turning barely changes the raw accel, so the spread test misses it.
+  // World-frame acceleration sees it, and is trustworthy until the phone has turned noticeably.
+  let turned = 0;
+  for (let i = 0; i < n; i++) {
+    if (i > 0) turned += norm(sub(gyr(samples[i]), cal.gyroBias)) * (samples[i].t - samples[i - 1].t);
+    if (moving[i] && turned < TRUST_WORLD_ROT) still[i] = false;
+  }
 
   // Runs of non-stillness, with short still gaps merged. Brief blips are not the move: on a
   // real phone they are the tap on Stop, or a bump when recording starts.
@@ -282,7 +303,10 @@ export function processRecording(calibSamples, samples, opts = {}) {
   if (endStill.length >= 5) {
     const aEnd = meanStd(endStill, acc).mean;
     gMagEnd = norm(aEnd);
-    const gEndW = unit(qRotate(q[n - 1], aEnd));
+    // Average the rotated specific force over the whole hold, not one sample's attitude.
+    const gSum = [0, 0, 0];
+    for (let i = iLast + 1; i < n; i++) { const w = qRotate(q[i], acc(samples[i])); for (let k = 0; k < 3; k++) gSum[k] += w[k]; }
+    const gEndW = unit(gSum);
     const c = cross(gEndW, [0, 0, 1]);
     tilt = Math.atan2(norm(c), gEndW[2]);
     tiltAxis = c;

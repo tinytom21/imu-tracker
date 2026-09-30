@@ -1,0 +1,102 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'index.html'
+      - 'app.js'
+      - 'capture.js'
+      - 'processing.js'
+      - 'viz.js'
+      - 'style.css'
+      - 'version.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Read app version
+        id: ver
+        run: echo "version=$(jq -r .version version.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare signing keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks"
+              echo "ANDROID_KEYSTORE_PASSWORD=$KS_PASS"
+              echo "ANDROID_KEY_ALIAS=$KS_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$KEY_PASS"
+            } >> "$GITHUB_ENV"
+            echo "Using release keystore."
+          else
+            echo "No keystore secret: release build falls back to the debug signing key."
+          fi
+
+      - name: Build release APK
+        run: >
+          gradle -p android assembleRelease
+          -PversionCode=${{ github.run_number }}
+          -PversionName=${{ steps.ver.outputs.version }}
+
+      - name: Collect APK
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK not found at $APK"
+            find android/app/build/outputs -type f || true
+            exit 1
+          fi
+          cp "$APK" imu-tracker.apk
+          ls -l imu-tracker.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imu-tracker-apk
+          path: imu-tracker.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          NOTES="IMU Tracker Android app, web version ${VERSION}, build ${{ github.run_number }}, commit ${GITHUB_SHA}."
+          if gh release view android-latest >/dev/null 2>&1; then
+            gh release edit android-latest --prerelease=false --title "Android app (latest)" --notes "$NOTES"
+          else
+            gh release create android-latest --target "$GITHUB_SHA" --title "Android app (latest)" --notes "$NOTES"
+          fi
+          gh release upload android-latest imu-tracker.apk --clobber

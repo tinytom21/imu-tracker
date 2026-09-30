@@ -20,4 +20,13 @@ Expect roughly ±2–5 cm on a quick (< 5 s) move in simulation; real-world erro
 - `viz.js` — three.js 3D path + top/side 2D views
 - `tests/test.html` — synthetic-trajectory tests for `processing.js` (serve the folder and open it)
 
+## Android app
+
+A native Android wrapper (WebView around the same web files plus a native sensor bridge) lives in `android/`. Chrome rounds sensor data to 0.1 m/s² / 0.1 °/s and caps it at ~55 Hz; the app records **full-rate, unrounded** accelerometer, gyroscope and rotation-vector data.
+
+- Download the APK: https://github.com/tinytom21/imu-tracker/releases/tag/android-latest
+- On the phone, allow **Install unknown apps** for your browser or file manager, then open the APK.
+- Built by GitHub Actions (`.github/workflows/android.yml`) on every push that touches the web files or `android/`. The web files are copied into the app at build time, not duplicated.
+- In the app, **Download raw data (CSV)** opens the Android share sheet.
+
 Use **Download raw data (CSV)** on the phone and **Load CSV** on desktop to replay recordings.

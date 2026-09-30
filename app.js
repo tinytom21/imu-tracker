@@ -262,6 +262,17 @@ function showResult(calib, rec, source) {
     ['Orientation sensor', hasQ ? 'yes' : 'no'],
     ['App version', window.APP_VERSION || '?'],
   ];
+  if (window.AndroidIMU) {
+    try {
+      const i = JSON.parse(window.AndroidIMU.info());
+      const hz = (v) => (v > 0 ? ` (max ${Math.round(v)} Hz)` : '');
+      details.push(['Sensors', [
+        `accel: ${i.accelName}${hz(i.accelMaxHz)}`,
+        `gyro: ${i.gyroName}${hz(i.gyroMaxHz)}`,
+        `rot: ${i.rotName || 'none'}`,
+      ].join(' | ')]);
+    } catch { /* info unavailable */ }
+  }
   el.details.innerHTML = '';
   for (const [k, v] of details) {
     const dt = document.createElement('dt'); dt.textContent = k;
@@ -313,6 +324,16 @@ function parseCsv(text) {
 }
 
 el.dl.addEventListener('click', () => {
+  const fileName = `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  if (window.AndroidIMU) {
+    // Blob downloads don't work in a WebView: hand the CSV to the native share sheet.
+    try {
+      window.AndroidIMU.shareCsv(fileName, toCsv(calibSamples, recSamples));
+    } catch (e) {
+      showError('Could not share CSV: ' + (e.message || e));
+    }
+    return;
+  }
   const blob = new Blob([toCsv(calibSamples, recSamples)], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

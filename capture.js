@@ -24,6 +24,7 @@ export class Capture {
 
   // Must be called directly from the Start click handler (iOS needs the user gesture).
   async requestPermission() {
+    if (window.AndroidIMU) return; // native app: no runtime permission prompt
     const DME = window.DeviceMotionEvent;
     if (DME && typeof DME.requestPermission === 'function') {
       const res = await DME.requestPermission();
@@ -39,6 +40,17 @@ export class Capture {
     this._times = [];
     this.sampleRate = 0;
     this.hasOrientation = false;
+
+    // Native Android app: full-rate, unrounded data through the JavascriptInterface bridge.
+    if (window.AndroidIMU) {
+      try {
+        await this._startNative();
+        return;
+      } catch (e) {
+        this._teardown();
+        throw e;
+      }
+    }
 
     let genericError = null;
     if (typeof Accelerometer !== 'undefined' && typeof Gyroscope !== 'undefined') {
@@ -173,6 +185,30 @@ export class Capture {
       this._stops.push(() => { try { acc.stop(); } catch { /* */ } try { gyr.stop(); } catch { /* */ } });
     });
     this.source = 'generic-sensor';
+  }
+
+  async _startNative() {
+    const bridge = window.AndroidIMU;
+    let ok = false;
+    try { ok = bridge.start(); } catch (e) { throw new Error('Native sensor start failed: ' + (e.message || e)); }
+    if (!ok) throw new Error('Accelerometer or gyroscope not available on this device.');
+    // Registered first so teardown always stops the native recorder.
+    this._stops.push(() => { try { bridge.stop(); } catch { /* */ } });
+
+    await this._firstSample((okCb, fail) => {
+      const poll = () => {
+        let arr;
+        try { arr = JSON.parse(bridge.drain()); } catch (e) { fail(e); return; }
+        for (const s of arr) {
+          if (s.qw != null) this.hasOrientation = true;
+          this._emit(s);
+        }
+        if (arr.length) okCb();
+      };
+      const id = setInterval(poll, 40);
+      this._stops.push(() => clearInterval(id));
+    });
+    this.source = 'native';
   }
 
   async _startDeviceMotion() {

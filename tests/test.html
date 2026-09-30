@@ -131,6 +131,21 @@ try {
   multi('12a Fused orientation, convention A', { ...BADGYRO, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 80);
   multi('12b Fused orientation, convention B', { ...BADGYRO, fusedConvention: 'B', D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 80);
   multi('12c Same data, gyro mode (for comparison)', { ...BADGYRO, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4 }, 1e9);
+  // Native Android app: 400 Hz, unrounded, low noise, still with start bump and Stop tap.
+  const NATIVE = { ...REAL, ...SCALE, accNoise: 0.012, gyroNoise: 0.001, rate: 400, jitter: 0.05, startBump: true, stopTap: true, fused: true, fusedErrDeg: 0.1 };
+  multi('13a Native 400 Hz, 800 mm route', { ...NATIVE, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4 }, 60);
+  multi('13b Native 400 Hz, fused orientation', { ...NATIVE, D: [0.8, 0.8, 0.8], rotDeg: 60, moveSec: 4, proc: { orientation: 'fused' } }, 60);
+  multi('13c Native 400 Hz, slow sideways slide', { ...NATIVE, D: [0.5, 0, 0], rotDeg: 0, moveSec: 4 }, 60);
+  {
+    const errsAll = []; let still = true;
+    for (let s = 1; s <= 5; s++) {
+      const g = generate({ ...NATIVE, D: [0, 0, 0], seed: s, stopTap: false, startBump: false });
+      const r = processRecording(g.calibSamples, g.samples);
+      errsAll.push(r.delta.map((x) => Math.abs(x) * 1000)); still = still && r.still === true;
+    }
+    const max = [0, 1, 2].map((k) => Math.max(...errsAll.map((e) => e[k])));
+    add({ name: '13d Native 400 Hz, no movement (5 seeds)', expected: '0, 0, 0', got: '(max abs) ' + max.map(f1).join(', '), errText: max.map(f1).join(', '), err: max, tol: '< 5 mm & still===true', extra: `still=${still}`, status: (Math.max(...max) < 5 && still) ? 'PASS' : 'FAIL' });
+  }
 } catch (e) {
   add({ name: 'EXCEPTION', expected: '', got: String((e && e.stack) || e), errText: '', tol: '', status: 'FAIL' });
 }
