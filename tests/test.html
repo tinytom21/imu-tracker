@@ -144,6 +144,28 @@ try {
   multi('14b Long reach with 1 s pause part-way', { ...LONG, segments: [{ ...legs[0], pause: 1.0 }, legs[1]] }, 60);
   multi('14c Three legs with pauses', { ...LONG, segments: [{ ...legs[0], pause: 1.0 }, { D: [0, 0.4, 0.2], moveSec: 2, rotDeg: 20, pause: 1.2 }, legs[1]] }, 80);
   multi('14d Pause too short to split (0.5 s)', { ...NATIVE, segments: [{ D: [0.3, 0.5, 0.4], moveSec: 3, rotDeg: 30, pause: 0.5 }, { D: [0.2, 0.3, 0.2], moveSec: 3, rotDeg: 20 }] }, 80);
+  // Loop closure: out to the far point, hold, back to the exact start. Scored on the far point.
+  const FAR = [0.48, 2.2, 0.9];
+  const back = (D) => D.map((x) => -x);
+  const LOOP = { ...LONG, truthD: FAR, proc: { loop: true } };
+  multi('15a One-way 6 s reach, no loop (for comparison)', { ...LONG, segments: [{ D: FAR, moveSec: 6, rotDeg: 50 }] }, 1e9);
+  multi('15b Same reach as a loop, 6 s each way', { ...LOOP, segments: [{ D: FAR, moveSec: 6, rotDeg: 50, pause: 1.5 }, { D: back(FAR), moveSec: 6, rotDeg: -50 }] }, 80);
+  multi('15c Loop with a pause on the way out (ignored)', { ...LOOP, segments: [{ D: [0.2, 1.0, 0.5], moveSec: 3, rotDeg: 25, pause: 1.0 }, { D: [0.28, 1.2, 0.4], moveSec: 3, rotDeg: 25, pause: 2.0 }, { D: back(FAR), moveSec: 6, rotDeg: -50 }] }, 80);
+  {
+    // Put back 0.2 m off the start and turned 8 degrees: the loop can't close properly, so it must warn.
+    const g = generate({ ...LOOP, rotAxis: [0, 0, 1], seed: 3, segments: [{ D: FAR, moveSec: 5, rotDeg: 30, pause: 1.5 }, { D: [-0.48, -2.0, -0.9], moveSec: 5, rotDeg: -22 }] });
+    const r = processRecording(g.calibSamples, g.samples, { loop: true });
+    const w = r.quality.warnings.join(' | ');
+    const ok = /turned/.test(w) && /missed by/.test(w);
+    add({ name: '15d Loop returned off-spot and turned: warns', expected: 'turned + missed warnings', got: `gap ${Math.round(r.loop.gapMm)} mm, heading ${r.loop.headingOffDeg.toFixed(1)} deg`, errText: '-', err: [0, 0, 0], tol: 'warnings present', extra: w, status: ok ? 'PASS' : 'FAIL' });
+  }
+  {
+    // Loop mode but no hold at the far point: falls back with a warning.
+    const g = generate({ ...LOOP, segments: [{ D: FAR, moveSec: 5, rotDeg: 30, pause: 0 }, { D: back(FAR), moveSec: 5, rotDeg: -30 }] });
+    const r = processRecording(g.calibSamples, g.samples, { loop: true });
+    const ok = r.loop === null && r.quality.warnings.some((x) => /no hold at the far point/.test(x));
+    add({ name: '15e Loop mode without a far-point hold: warns', expected: 'loop null + warning', got: `loop ${r.loop === null ? 'null' : 'set'}`, errText: '-', err: [0, 0, 0], tol: 'warning present', extra: r.quality.warnings.join(' | '), status: ok ? 'PASS' : 'FAIL' });
+  }
   {
     const errsAll = []; let still = true;
     for (let s = 1; s <= 5; s++) {

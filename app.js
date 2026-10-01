@@ -18,7 +18,8 @@ const CP_FLASH_MS = 1500;
 class CheckpointTracker {
   constructor(calSamples) { this.cal = calibrate(calSamples); this.reset(); }
   reset() {
-    this.count = 0; this.moved = false; // recording starts right after a still calibration hold this.stillSince = null; this.lastEval = -Infinity;
+    this.count = 0; this.moved = false; // recording starts right after a still calibration hold
+    this.stillSince = null; this.lastEval = -Infinity;
     this.still = false; this.progress = 0; this.registered = false;
   }
   // Returns { still, moved, progress (0..1), count, registered (true only on the update that registers) }.
@@ -53,7 +54,24 @@ const el = {
   recStatus: $('recStatus'), recTime: $('recTime'), recRate: $('recRate'), recNote: $('recNote'),
   rows: $('rows'), compare: $('compare'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
   dl: $('dl'), csv: $('csv'),
+  modeSingle: $('modeSingle'), modeLoop: $('modeLoop'), stepsLoop: $('stepsLoop'), stepsSingle: $('stepsSingle'),
+  modeBadge: $('modeBadge'), rowsLabel: $('rowsLabel'),
 };
+
+// Loop mode: go A -> B, hold, return to exactly A, hold. Persisted across reloads.
+let loopMode = false;
+try { loopMode = localStorage.getItem('imuMode') === 'loop'; } catch { /* storage unavailable */ }
+function setMode(loop, save = true) {
+  loopMode = loop;
+  el.modeSingle.setAttribute('aria-checked', String(!loop));
+  el.modeLoop.setAttribute('aria-checked', String(loop));
+  el.stepsLoop.hidden = !loop;
+  el.stepsSingle.hidden = loop;
+  if (save) { try { localStorage.setItem('imuMode', loop ? 'loop' : 'single'); } catch { /* ignore */ } }
+}
+el.modeSingle.addEventListener('click', () => setMode(false));
+el.modeLoop.addEventListener('click', () => setMode(true));
+setMode(loopMode, false);
 
 let state = 'idle';           // idle | starting | calibrating | recording | result
 let buf = [];                 // rolling calibration buffer
@@ -132,7 +150,9 @@ function renderCheckpoint(s) {
   const flashing = performance.now() < cpFlashUntil;
   if (s.registered) {
     cpFlashUntil = performance.now() + CP_FLASH_MS;
-    el.cpMsg.textContent = `✓ Checkpoint ${s.count} — carry on (or press Stop)`;
+    el.cpMsg.textContent = loopMode
+      ? (s.count === 1 ? '✓ Far point recorded — now bring it back to the exact start spot' : '✓ Back at start? Press Stop')
+      : `✓ Checkpoint ${s.count} — carry on (or press Stop)`;
     el.cpMsg.classList.add('flash');
     beep();
   } else if (!flashing) {
@@ -140,7 +160,7 @@ function renderCheckpoint(s) {
     el.cpMsg.textContent = s.moved && s.still ? 'Hold still…' : ' ';
   }
   el.cpBar.style.width = ((flashing || s.registered) ? 100 : s.progress * 100).toFixed(0) + '%';
-  el.cpCount.textContent = 'Checkpoints: ' + s.count;
+  el.cpCount.textContent = (loopMode ? 'Holds recorded: ' : 'Checkpoints: ') + s.count;
   el.cpCount.classList.toggle('has', s.count > 0);
 }
 
@@ -220,6 +240,7 @@ function calibTick() {
     stopTicker();
     try { cpTracker = new CheckpointTracker(calibSamples); } catch { cpTracker = null; }
     cpFlashUntil = 0;
+    el.modeBadge.hidden = !loopMode;
     renderCheckpoint({ still: false, moved: false, progress: 0, count: 0, registered: false });
     setState('recording');
     tick = setInterval(recTick, 150);
@@ -256,7 +277,7 @@ function signed(v) {
 function showResult(calib, rec, source) {
   let res;
   try {
-    res = processRecording(calib, rec);
+    res = processRecording(calib, rec, loopMode ? { loop: true } : undefined);
   } catch (e) {
     showError('Processing failed: ' + e.message);
     return;
@@ -265,7 +286,7 @@ function showResult(calib, rec, source) {
   let fused = null, fusedErr = null;
   if (hasQ) {
     try {
-      fused = processRecording(calib, rec, { orientation: 'fused' });
+      fused = processRecording(calib, rec, { orientation: 'fused', ...(loopMode ? { loop: true } : {}) });
     } catch (e) {
       fusedErr = e.message || String(e);
     }
@@ -276,6 +297,7 @@ function showResult(calib, rec, source) {
 
   const [x, y, z] = res.delta;
   el.rows.innerHTML = '';
+  el.rowsLabel.hidden = !loopMode;
   for (const [v, axis, label] of [[z, 'Z', 'up'], [y, 'Y', 'forward'], [x, 'X', 'right']]) {
     const d = document.createElement('div');
     d.className = 'row';
@@ -370,6 +392,15 @@ function showResult(calib, rec, source) {
     ['Orientation sensor', hasQ ? 'yes' : 'no'],
     ['App version', window.APP_VERSION || '?'],
   ];
+  if (loopMode && res.loop) {
+    const L = res.loop;
+    const h = L.headingOffDeg;
+    details.splice(0, 0,
+      ['Loop gap', `${Math.round(L.gapMm)} mm (drift removed)`],
+      ['Return tilt', `${L.tiltOffDeg.toFixed(1)}°`],
+      ['Return heading', `${Math.abs(h).toFixed(1)}° ${h >= 0 ? 'right' : 'left'}`],
+      ['Uncorrected', `${mm(L.raw[0])} / ${mm(L.raw[1])} / ${mm(L.raw[2])} mm (X / Y / Z)`]);
+  }
   if (window.AndroidIMU) {
     try {
       const i = JSON.parse(window.AndroidIMU.info());

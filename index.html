@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>IMU Tracker</title>
-  <link rel="stylesheet" href="style.css?v=0.9">
+  <link rel="stylesheet" href="style.css?v=0.10">
   <script type="importmap">
   {
     "imports": {
@@ -21,7 +21,18 @@
     <div id="banner" class="banner" role="alert" hidden></div>
 
     <section id="idle" class="panel">
-      <ol class="steps">
+      <div class="seg" role="radiogroup" aria-label="Measurement mode">
+        <button type="button" id="modeSingle" class="seg-btn" role="radio" aria-checked="true" data-mode="single">Single move</button>
+        <button type="button" id="modeLoop" class="seg-btn" role="radio" aria-checked="false" data-mode="loop">Loop (there and back)</button>
+      </div>
+      <ol class="steps" id="stepsLoop" hidden>
+        <li>Place the phone <b>flat</b> against a straight edge (table edge, box, ruler). <b>Remember exactly where it sits</b>: this is the start spot.</li>
+        <li>Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.</li>
+        <li>Move smoothly to the far point and hold <b>completely still</b> until the green <b>✓ Far point recorded</b> tick appears. Don't pause on the way there.</li>
+        <li>Bring it back to <b>exactly the same spot and orientation</b> (same edge), without pausing, and set it down <b>gently</b>.</li>
+        <li>Hold still until the green tick appears, then press <b>Stop</b>. The result is start to far point, with drift removed.</li>
+      </ol>
+      <ol class="steps" id="stepsSingle">
         <li>Place the phone <b>flat</b> and line it up against a straight edge (table edge, box, ruler), with the <b>top of the phone</b> pointing the way you want to call <b>+Y</b>.</li>
         <li>Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.</li>
         <li>Move smoothly, ideally in under 5&nbsp;s. For a long or awkward route, stop part-way (e.g. on the door sill) and hold the phone completely still until the green <b>✓ Checkpoint</b> tick appears (about a second): each checkpoint resets the drift.</li>
@@ -37,6 +48,7 @@
     </section>
 
     <section id="rec" class="panel" hidden>
+      <div id="modeBadge" class="mode-badge" hidden>Loop mode</div>
       <div id="recStatus" class="big status">Moving…</div>
       <div class="stats"><span>Time <b id="recTime">0.0 s</b></span><span>Rate <b id="recRate">– Hz</b></span></div>
       <div id="cpBox" class="cp" aria-live="polite">
@@ -51,6 +63,7 @@
 
     <section id="result" hidden>
       <div class="panel">
+        <div class="rows-label" id="rowsLabel" hidden>Start → far point</div>
         <div class="rows" id="rows"></div>
         <div class="compare" id="compare"></div>
         <div class="total" id="total"></div>

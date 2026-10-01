@@ -77,6 +77,7 @@ export function generate(opts = {}) {
   const moveEnd = tSeg;
   const total = moveEnd + o.postHold;
   if (o.segments) o.D = o.segments.reduce((acc, s) => acc.map((x, k) => x + s.D[k]), [0, 0, 0]);
+  if (o.truthD) o.D = o.truthD; // what the processing should report (loop closure: the far point)
 
   function truth(t) {
     let th = 0, thd = 0;

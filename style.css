@@ -20,6 +20,13 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
   padding: 14px; margin-bottom: 12px; }
+.seg { display: flex; gap: 4px; padding: 4px; margin-bottom: 12px; background: var(--canvas); border-radius: 12px; }
+.seg-btn { flex: 1; font: inherit; font-weight: 600; padding: 10px 8px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); cursor: pointer; }
+.seg-btn[aria-checked="true"] { background: var(--accent); color: #fff; }
+.mode-badge { display: inline-block; margin-bottom: 6px; padding: 2px 12px; border-radius: 999px; font-size: .85rem;
+  font-weight: 700; background: var(--accent); color: #fff; }
+.rows-label { color: var(--muted); font-size: .95rem; margin-bottom: 2px; }
 .steps { margin: 0; padding-left: 1.3rem; color: var(--muted); }
 .steps li { margin: 6px 0; }
 .steps b { color: var(--text); }

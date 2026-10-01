@@ -18,7 +18,10 @@ const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the m
 const KNOCK_ACC = 6;      // m/s^2 spike near the end of the move = phone knocked onto the surface
 const KNOCK_WIN_S = 0.6;
 const KNOCK_MAX_RATE = 150; // Hz: above this a knock is sampled properly and doesn't matter
-const STAGE_GAP_S = 0.8;  // a still pause at least this long splits the move into stages
+const STAGE_GAP_S = 0.8;
+const LOOP_TILT_DEG = 2;     // put back tilted more than this → warn
+const LOOP_HEADING_DEG = 3;  // put back turned more than this → warn
+const LOOP_GAP_MM = 150;     // loop misses by more than this → warn (simulated drift alone: < 70 mm)  // a still pause at least this long splits the move into stages
 const TRUST_WORLD_ROT = 10 * Math.PI / 180; // rotation beyond which world accel isn't used for stillness
 const FUSED_REF_S = 0.3;  // average the phone-fusion reference attitude over the still start
 
@@ -273,10 +276,25 @@ export function processRecording(calibSamples, samples, opts = {}) {
   // Stages: moves separated by a still pause long enough to act as a checkpoint. Each pause
   // resets velocity to zero and re-anchors the tilt/gravity correction, so drift cannot build
   // up across the whole move. A move with no such pause is a single stage.
-  const groups = [{ a: real[0].a, b: real[0].b }];
+  let groups = [{ a: real[0].a, b: real[0].b }];
   for (const r of real.slice(1)) {
     const g = groups[groups.length - 1];
     if (samples[r.a].t - samples[g.b].t < (opts.stageGap ?? STAGE_GAP_S)) g.b = r.b; else groups.push({ a: r.a, b: r.b });
+  }
+  // Loop closure: out to the far point, hold, back to the start. The longest pause is the far
+  // point; other pauses are not checkpoints, so the run is exactly two legs.
+  let loopOk = false;
+  if (opts.loop) {
+    if (groups.length >= 2) {
+      let k = 0;
+      for (let j = 1; j < groups.length - 1; j++) {
+        if (samples[groups[j + 1].a].t - samples[groups[j].b].t > samples[groups[k + 1].a].t - samples[groups[k].b].t) k = j;
+      }
+      groups = [{ a: groups[0].a, b: groups[k].b }, { a: groups[k + 1].a, b: groups[groups.length - 1].b }];
+      loopOk = true;
+    } else {
+      warnings.push('Loop closure: no hold at the far point was found, so the loop could not be closed.');
+    }
   }
   const iLastRaw = groups[groups.length - 1].b;
   // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
@@ -390,6 +408,39 @@ export function processRecording(calibSamples, samples, opts = {}) {
     path.push({ t: samples[i].t - t0, p: p.slice() });
   }
 
+  // Loop closure: the phone is back where it started, so the end position must be zero. Whatever
+  // is left is drift; share it between the legs in proportion to duration squared (drift grows
+  // roughly with time squared) and report the far point.
+  let loop = null;
+  if (loopOk) {
+    const [l1, l2] = stages;
+    const gap = path[n - 1].p.slice();
+    const share = l1.duration ** 2 / (l1.duration ** 2 + l2.duration ** 2);
+    const corr = (i) => {
+      if (i <= l1.a) return 0;
+      if (i <= l1.b) return share * (samples[i].t - samples[l1.a].t) / l1.duration;
+      if (i <= l2.a) return share;
+      if (i <= l2.b) return share + (1 - share) * (samples[i].t - samples[l2.a].t) / l2.duration;
+      return 1;
+    };
+    const raw = path[l1.b].p.slice();
+    for (let i = 0; i < n; i++) { const f = corr(i); path[i].p = path[i].p.map((x, k) => x - gap[k] * f); }
+    p = path[l1.b].p.slice();
+
+    // Was the phone put back the same way? Tilt from gravity (independent of the gyro);
+    // heading from the gyro-tracked attitude, so it also includes any gyro drift.
+    const aStart = meanStd(calibSamples, acc).mean;
+    const aEnd = meanStd(samples.slice(l2.b + 1), acc).mean;
+    const tiltOff = Math.acos(Math.min(1, dot(unit(aStart), unit(aEnd)))) * 180 / Math.PI;
+    const fwdDev = cal.forwardAxis === 'top' ? [0, 1, 0] : [0, 0, -1];
+    const fEnd = qRotate(qMul(qCorr, q[n - 1]), fwdDev);
+    const headingOff = Math.atan2(fEnd[0], fEnd[1]) * 180 / Math.PI; // + = turned right
+    loop = { gap, gapMm: norm(gap) * 1000, share, raw, legs: [l1.duration, l2.duration], tiltOffDeg: tiltOff, headingOffDeg: headingOff };
+    if (tiltOff > LOOP_TILT_DEG) warnings.push(`Loop closure: the phone was put back tilted ${tiltOff.toFixed(1)}° from how it started — return it to exactly the same position.`);
+    if (Math.abs(headingOff) > LOOP_HEADING_DEG) warnings.push(`Loop closure: the phone came back turned ${Math.abs(headingOff).toFixed(1)}° from how it started — line it up the same way.`);
+    if (loop.gapMm > LOOP_GAP_MM) warnings.push(`Loop closure: the loop missed by ${Math.round(loop.gapMm)} mm — either it wasn't returned to the exact start spot, or drift was high.`);
+  }
+
   // Drift grows with time within a stage, so judge the longest stage, not the whole recording.
   const worst = stages.reduce((w, s) => (norm(s.vEnd) > norm(w.vEnd) ? s : w));
   const duration = Math.max(...stages.map((s) => s.duration));
@@ -401,7 +452,7 @@ export function processRecording(calibSamples, samples, opts = {}) {
            motionStart: samples[iFirst].t - t0, motionEnd: samples[iLast].t - t0,
            stages: stages.map((s) => ({ start: samples[s.a].t - t0, end: samples[s.b].t - t0, drift: norm(s.vEnd), tiltDeg: s.tilt * 180 / Math.PI })),
            endVelocityCorrected: worst.vEnd, tiltCorrectionDeg: tilt * 180 / Math.PI,
-           sampleRate, knock, orientation: opts.orientation || 'gyro', fusedConvention };
+           sampleRate, knock, orientation: opts.orientation || 'gyro', fusedConvention, loop };
 }
 
 function grade(cal, m, warnings) {
