@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, safe)
                     put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/IMU Tracker")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Offset")
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
                 val resolver = contentResolver
@@ -185,7 +185,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     throw e
                 }
-                val path = "Download/IMU Tracker/$safe"
+                val path = "Download/Offset/$safe"
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "Saved to $path", Toast.LENGTH_LONG).show()
                 }

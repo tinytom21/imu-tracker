@@ -1,6 +1,6 @@
 {
-  "version": "0.14",
+  "version": "0.15",
   "date": "2026-10-02",
   "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
-  "notes": "New OXTS colours and icon."
+  "notes": "Renamed to Offset."
 }

@@ -1,6 +1,6 @@
-# IMU Tracker
+# Offset
 
-Proof of concept: record a phone's accelerometer + gyroscope in the browser and estimate how far it moved (X right, Y forward, Z up).
+Proof of concept: record a phone's accelerometer + gyroscope and estimate how far it moved (X right, Y forward, Z up) — for example a lever-arm offset on a vehicle. Working name; formerly "IMU Tracker" (the repo, Worker and Android package still use that name).
 
 Live: https://tinytom21.github.io/imu-tracker/
 

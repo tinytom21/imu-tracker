@@ -1,4 +1,4 @@
-// IMU Tracker UI: idle -> calibrating -> recording -> result.
+// Offset UI: idle -> calibrating -> recording -> result.
 // Modules are loaded with the release version in their URL so a new release bypasses the cache.
 const V = new URL(import.meta.url).searchParams.get('v') || Date.now();
 const { stillnessOf, processRecording, calibrate, windowIsStill, STILL_WINDOW_S, CHECKPOINT_HOLD_S } =
@@ -513,7 +513,7 @@ function parseCsv(text) {
   return { calib, rec };
 }
 
-const csvFileName = () => `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+const csvFileName = () => `offset-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
 
 if (window.AndroidIMU) {
   // Blob downloads don't work in a WebView: save via MediaStore or hand to the share sheet.
@@ -558,7 +558,7 @@ function downloadCsvBlob() {
   const blob = new Blob([toCsv(calibSamples, recSamples)], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `imu-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  a.download = `offset-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

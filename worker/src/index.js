@@ -1,4 +1,4 @@
-// IMU Tracker run collection: anyone may add a run (with limits); only the admin may read.
+// Offset run collection: anyone may add a run (with limits); only the admin may read.
 //
 // POST   /v1/runs            multipart: meta (JSON), csv (gzipped CSV)      -> 201 { id }
 // GET    /v1/runs?since=ISO  admin: run metadata, newest first              -> { runs: [...] }
@@ -145,7 +145,7 @@ async function checkCsv(gz) {
   } finally {
     reader.cancel().catch(() => {});
   }
-  if (!head.startsWith(CSV_HEADER)) throw new HttpError(400, 'not an IMU Tracker CSV');
+  if (!head.startsWith(CSV_HEADER)) throw new HttpError(400, 'not an Offset recording');
 }
 
 async function listRuns(url, env) {

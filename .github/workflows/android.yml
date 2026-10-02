@@ -96,7 +96,7 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          NOTES="IMU Tracker Android app, web version ${VERSION}, build ${{ github.run_number }}, commit ${GITHUB_SHA}."
+          NOTES="Offset Android app, web version ${VERSION}, build ${{ github.run_number }}, commit ${GITHUB_SHA}."
           if gh release view android-latest >/dev/null 2>&1; then
             gh release edit android-latest --prerelease=false --title "Android app (latest)" --notes "$NOTES"
           else
