@@ -18,7 +18,8 @@ OUT = ROOT / "tests" / "data" / "runs"
 
 
 def get(url, token):
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    # Cloudflare blocks Python's default user agent (error 1010), so name ourselves.
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "User-Agent": "imu-tracker-fetch-runs"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read()
 
