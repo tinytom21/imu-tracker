@@ -84,6 +84,22 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; }
 .diag[open] > summary { margin-bottom: 6px; }
 .cmp-warn { margin: 6px 0 0; padding-left: 1.2rem; color: var(--muted); font-size: .85rem; }
 
+.contrib h2 { font-size: 1.1rem; margin: 0 0 8px; }
+.contrib form { display: grid; gap: 10px; }
+.contrib-hint { margin: 0; color: var(--muted); font-size: .85rem; }
+.contrib-ref { margin: 0; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.contrib-ref legend { padding: 0 6px; color: var(--muted); font-size: .85rem; }
+.contrib-xyz { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.contrib label { display: grid; gap: 3px; font-size: .85rem; color: var(--muted); min-width: 0; }
+.contrib input[type="number"], .contrib input[type="text"], .contrib select, .contrib textarea {
+  width: 100%; min-width: 0; font: inherit; font-size: 1rem; color: var(--text); background: var(--canvas);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.contrib textarea { resize: vertical; }
+.contrib .contrib-check { display: flex; align-items: center; gap: 10px; font-size: .95rem; color: var(--text); }
+.contrib .contrib-check input { width: 20px; height: 20px; flex: none; margin: 0; }
+.contrib-status { min-height: 1.4em; font-size: .95rem; color: var(--muted); }
+.contrib-status.ok { color: var(--ok); } .contrib-status.bad { color: var(--bad); }
+
 .legend { display: flex; gap: 14px; justify-content: center; font-size: .8rem; color: var(--muted); margin-bottom: 6px; }
 .legend .sw { display: inline-block; width: 18px; height: 4px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
 

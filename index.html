@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>IMU Tracker</title>
-  <link rel="stylesheet" href="style.css?v=0.10">
+  <link rel="stylesheet" href="style.css?v=0.11">
   <script type="importmap">
   {
     "imports": {
@@ -71,6 +71,40 @@
         <ul id="warnings" class="warnings"></ul>
         <dl id="details" class="details"></dl>
       </div>
+      <section id="contrib" class="panel contrib" hidden>
+        <h2>Contribute this run</h2>
+        <p id="contribOff" class="contrib-hint" hidden>Contributions aren't switched on yet</p>
+        <form id="contribForm" autocomplete="off" hidden>
+          <p class="contrib-hint">Sends the raw sensor recording and the details below to the IMU Tracker developers to help improve accuracy. No location, name or account is collected; an anonymous device ID links your runs.</p>
+          <fieldset class="contrib-ref">
+            <legend>Reference measurement (optional)</legend>
+            <div class="contrib-xyz">
+              <label>X<input id="refX" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
+              <label>Y<input id="refY" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
+              <label>Z<input id="refZ" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
+            </div>
+            <label class="contrib-field">Method
+              <select id="refMethod">
+                <option value="tape">Tape measure</option>
+                <option value="laser">Laser</option>
+                <option value="estimate">Estimate</option>
+              </select>
+            </label>
+            <p class="contrib-hint">If you measured the real distance, enter it — these runs are the most useful.</p>
+          </fieldset>
+          <label class="contrib-field">Route
+            <input id="contribRoute" type="text" maxlength="120" placeholder="e.g. boot to roof">
+          </label>
+          <label class="contrib-field">Notes
+            <textarea id="contribNotes" rows="2" maxlength="2000"></textarea>
+          </label>
+          <label class="contrib-check"><input id="contribFlagged" type="checkbox"> This run went wrong (e.g. bumped, wrong spot)</label>
+          <label class="contrib-check"><input id="contribAgree" type="checkbox"> I agree to send this run</label>
+          <button id="contribSubmit" class="secondary" type="submit" disabled>Submit</button>
+          <div id="contribStatus" class="contrib-status" aria-live="polite"></div>
+          <div id="contribQueue" class="contrib-hint" hidden></div>
+        </form>
+      </section>
       <div class="panel viz">
         <div id="legend" class="legend" hidden>
           <span><i class="sw" style="background:#ffc933"></i>Gyro</span>

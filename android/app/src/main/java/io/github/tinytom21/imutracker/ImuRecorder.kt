@@ -134,7 +134,9 @@ class ImuRecorder(context: Context) : SensorEventListener {
         fun name(s: Sensor?): String = s?.name ?: ""
         return "{\"accelName\":${jsonString(name(accel))},\"gyroName\":${jsonString(name(gyro))}," +
             "\"rotName\":${jsonString(name(rot))},\"accelMaxHz\":${maxHz(accel)}," +
-            "\"gyroMaxHz\":${maxHz(gyro)},\"rotMaxHz\":${maxHz(rot)}}"
+            "\"gyroMaxHz\":${maxHz(gyro)},\"rotMaxHz\":${maxHz(rot)}," +
+            "\"model\":${jsonString(android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)}," +
+            "\"androidVersion\":${jsonString(android.os.Build.VERSION.RELEASE)}}"
     }
 
     // ------------------------------------------------------------------ sensor callbacks

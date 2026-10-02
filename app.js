@@ -5,6 +5,10 @@ const { stillnessOf, processRecording, calibrate, windowIsStill, STILL_WINDOW_S,
   await import(`./processing.js?v=${V}`);
 const { Capture } = await import(`./capture.js?v=${V}`);
 const { createViz } = await import(`./viz.js?v=${V}`);
+const { initContribute } = await import(`./contribute.js?v=${V}`);
+// Runs loaded from a CSV file can't be contributed (dev switch: ?devContribute=1).
+const DEV_CONTRIBUTE = new URLSearchParams(location.search).get('devContribute') === '1';
+const contributeReady = initContribute().catch((e) => { console.warn('Contribute unavailable:', e); return null; });
 
 const CALIB_S = 2.0;      // required continuous stillness at start
 const CALIB_WIN_S = 0.4;  // short window used to track continuous stillness
@@ -419,7 +423,49 @@ function showResult(calib, rec, source) {
     el.details.append(dt, dd);
   }
   viz?.update(res.path, null);
+  offerContribution(res, calib, rec, source, loopMode);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ---------------------------------------------------------------- contribute
+async function offerContribution(res, calib, rec, source, loop) {
+  const c = await contributeReady;
+  if (!c) return;
+  const fromFile = String(source).startsWith('csv');
+  if (fromFile && !DEV_CONTRIBUTE) { c.hide(); return; }
+  const num = (v) => (Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null);
+  c.show({
+    allowed: true,
+    async build() {
+      const L = res.loop;
+      const drift = res.endVelocityCorrected ? Math.hypot(...res.endVelocityCorrected) : 0;
+      const meta = {
+        app_version: String(window.APP_VERSION || ''),
+        mode: loop ? 'loop' : 'single',
+        source: fromFile ? 'csv' : String(source).slice(0, 32),
+        sample_rate: num(res.sampleRate),
+        device: await c.deviceModel(),
+        result: res.delta.map(mm),
+        quality: res.quality.level,
+        warnings: res.quality.warnings.slice(0, 20),
+        reference: null,
+        extra: {
+          loop: L ? {
+            gapMm: num(L.gapMm), tiltOffDeg: num(L.tiltOffDeg), headingOffDeg: num(L.headingOffDeg),
+            rawMm: L.raw.map(mm), legs: L.legs.map(num),
+          } : null,
+          stages: (res.stages || []).map((s) => ({ start: num(s.start), end: num(s.end), drift: num(s.drift), tiltDeg: num(s.tiltDeg) })),
+          endHold: num(res.quality.endHold),
+          driftCorrected: num(drift),
+          tiltCorrectionDeg: num(res.tiltCorrectionDeg),
+          motionStart: num(res.motionStart),
+          motionEnd: num(res.motionEnd),
+          knock: num(res.knock),
+        },
+      };
+      return { meta, csv: toCsv(calib, rec) };
+    },
+  });
 }
 
 // ---------------------------------------------------------------- CSV

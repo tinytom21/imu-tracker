@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IMU Tracker contributed runs</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #16181d; }
+  table { border-collapse: collapse; margin: 12px 0 28px; }
+  th, td { padding: 4px 10px; border-bottom: 1px solid #ddd; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .fail { color: #c62828; } .pass { color: #2e7d32; } .muted { color: #777; }
+</style>
+</head>
+<body>
+<h1>Contributed runs, re-scored with the current processing</h1>
+<p class="muted">Data: <code>tests/data/runs/</code> (download with <code>python tools/fetch_runs.py</code>). Runs flagged as gone wrong are listed but not scored.</p>
+<div id="out">Loading…</div>
+<script type="module">
+// Cache-busted so the current processing.js is always used.
+const v = Date.now();
+const { processRecording } = await import(`../processing.js?v=${v}`);
+const LIMIT = 150;
+
+function parseCsv(text) {
+  const lines = text.trim().split('\n');
+  const hdr = lines[0].split(',');
+  const cal = [], rec = [];
+  for (const l of lines.slice(1)) {
+    const cells = l.split(',');
+    const o = {};
+    hdr.forEach((h, i) => { if (h !== 'phase') o[h] = cells[i] === '' || cells[i] === undefined ? null : Number(cells[i]); });
+    (cells[0] === 'calib' ? cal : rec).push(o);
+  }
+  return { cal, rec };
+}
+
+const out = document.getElementById('out');
+let index;
+try { index = await (await fetch(`data/runs/index.json?v=${v}`)).json(); }
+catch { out.textContent = 'No tests/data/runs/index.json yet — run tools/fetch_runs.py first.'; throw new Error('no index'); }
+
+const rows = [];
+for (const r of index) {
+  const { cal, rec } = parseCsv(await (await fetch(`data/runs/${r.id}.csv?v=${v}`)).text());
+  let res, err = null;
+  try { res = processRecording(cal, rec, { loop: r.mode === 'loop' }); } catch (e) { err = e.message; }
+  const d = res ? res.delta.map((x) => x * 1000) : null;
+  const ref = r.ref_x != null ? [r.ref_x, r.ref_y, r.ref_z] : null;
+  const e = d && ref ? d.map((x, k) => x - ref[k]) : null;
+  rows.push({ r, d, ref, e, err, pass: e ? e.every((x) => Math.abs(x) <= LIMIT) : null, level: res?.quality.level });
+}
+
+const f0 = (x) => (x == null ? '' : Math.round(x));
+const scored = rows.filter((x) => x.e && !x.r.flagged_error);
+const groupBy = (key) => {
+  const m = new Map();
+  for (const x of scored) { const k = key(x) || '(none)'; if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
+  return [...m.entries()];
+};
+const summary = (title, key) => {
+  const g = groupBy(key);
+  let h = `<h2>By ${title}</h2><table><tr><th>${title}</th><th>scored runs</th><th>within ±150 mm</th><th>within ±100 mm</th><th>mean |error| X / Y / Z (mm)</th><th>worst axis (mm)</th></tr>`;
+  for (const [k, xs] of g) {
+    const n = xs.length, p150 = xs.filter((x) => x.pass).length, p100 = xs.filter((x) => x.e.every((v) => Math.abs(v) <= 100)).length;
+    const mae = [0, 1, 2].map((i) => xs.reduce((s, x) => s + Math.abs(x.e[i]), 0) / n);
+    const worst = Math.max(...xs.map((x) => Math.max(...x.e.map(Math.abs))));
+    h += `<tr><td>${k}</td><td>${n}</td><td>${p150}</td><td>${p100}</td><td>${mae.map(f0).join(' / ')}</td><td>${f0(worst)}</td></tr>`;
+  }
+  return h + '</table>';
+};
+
+let html = `<p>${index.length} runs downloaded · ${rows.filter((x) => x.ref).length} with a reference · ${scored.length} scored (not flagged).</p>`;
+html += summary('mode', (x) => x.r.mode) + summary('sensor source', (x) => x.r.source) + summary('device', (x) => x.r.device)
+  + summary('route', (x) => x.r.route) + summary('app version (at upload)', (x) => x.r.app_version);
+html += '<h2>All runs</h2><table><tr><th>uploaded</th><th>route</th><th>mode</th><th>source</th><th>device</th><th>result X / Y / Z</th><th>reference</th><th>error</th><th>quality</th><th></th></tr>';
+for (const x of [...rows].reverse()) {
+  const cls = x.pass === null ? 'muted' : x.pass ? 'pass' : 'fail';
+  html += `<tr class="${x.r.flagged_error ? 'muted' : ''}"><td>${x.r.created_at.slice(0, 16).replace('T', ' ')}</td><td>${x.r.route || ''}</td><td>${x.r.mode || ''}</td><td>${x.r.source || ''}</td><td>${x.r.device || ''}</td>`
+    + `<td>${x.d ? x.d.map(f0).join(' / ') : x.err}</td><td>${x.ref ? x.ref.map(f0).join(' / ') + (x.r.ref_method ? ` (${x.r.ref_method})` : '') : ''}</td>`
+    + `<td class="${cls}">${x.e ? x.e.map(f0).join(' / ') : ''}</td><td>${x.level || ''}</td><td>${x.r.flagged_error ? 'flagged' : ''}</td></tr>`;
+}
+out.innerHTML = html + '</table>';
+window.datasetRows = rows;
+</script>
+</body>
+</html>
