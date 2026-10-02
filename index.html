@@ -4,8 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#c11722">
   <title>IMU Tracker</title>
-  <link rel="stylesheet" href="style.css?v=0.13">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@600;700&family=Wix+Madefor+Text:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="style.css?v=0.14">
   <script type="importmap">
   {
     "imports": {
@@ -108,7 +112,7 @@
       </section>
       <div class="panel viz">
         <div id="legend" class="legend" hidden>
-          <span><i class="sw" style="background:#ffc933"></i>Gyro</span>
+          <span><i class="sw" style="background:var(--accent)"></i>Gyro</span>
           <span><i class="sw" style="background:#e040fb"></i>Phone fusion</span>
         </div>
         <div id="view3d" class="view3d"></div>

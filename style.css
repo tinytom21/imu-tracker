@@ -1,21 +1,26 @@
+/* OXTS palette (oxts.com theme tokens): red #C11722 is the hero; burgundy #510224, plum #2A0A18,
+   warm grey #9E9491, warm off-white #ECEAE9. Dark mode uses the plum family with a lifted red. */
 :root {
-  --bg: #f4f5f7; --panel: #ffffff; --text: #16181d; --muted: #5d6470; --border: #d9dce2;
-  --accent: #2563eb; --stop: #dc2626; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
-  --canvas: #eef0f4; --grid: #c9cdd6;
+  --bg: #eceae9; --panel: #ffffff; --text: #2a0a18; --muted: #6b605d; --border: #e2e2e2;
+  --accent: #c11722; --stop: #510224; --ok: #2e7d32; --warn: #b26a00; --bad: #c11722;
+  --canvas: #f5f5f5; --grid: #d8d3d1;
+  --start: #9e9491; --end: #2a0a18;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101317; --panel: #1a1f26; --text: #e8eaee; --muted: #9aa3b0; --border: #2c333d;
-    --accent: #4c8dff; --stop: #ef4444; --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
-    --canvas: #12161b; --grid: #2f3742;
+    --bg: #1a0610; --panel: #2a0a18; --text: #f3efee; --muted: #b3a8a5; --border: #46202f;
+    --accent: #e0323c; --stop: #8a1c3f; --ok: #4caf50; --warn: #f0a830; --bad: #e0323c;
+    --canvas: #220812; --grid: #4a2a36;
+    --start: #9e9491; --end: #f3efee;
   }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
-  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  font: 16px/1.45 "Wix Madefor Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 main { max-width: 640px; margin: 0 auto; padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); }
-h1 { font-size: 1.4rem; margin: 4px 0 12px; }
+h1, .big, .main { font-family: "Wix Madefor Display", "Wix Madefor Text", system-ui, sans-serif; }
+h1 { font-size: 1.4rem; margin: 4px 0 12px; font-weight: 700; }
 [hidden] { display: none !important; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;

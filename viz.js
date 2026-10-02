@@ -62,7 +62,7 @@ function drawPlot(canvas, points, points2, hAxis, vAxis, hName, vName) {
   }
 
   const dot = (p, color, r = 5) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), r, 0, 7); ctx.fill(); };
-  dot(start, '#22c55e'); dot(end, '#ef4444');
+  dot(start, css('--start')); dot(end, css('--end'));
   if (pts2 && pts2.length) {
     const e2 = pts2[pts2.length - 1];
     dot(e2, '#ffffff', 5); dot(e2, FUSED_CSS, 3.5);
@@ -168,7 +168,7 @@ async function create3D(container) {
     // path
     const vs = points.map((p) => new THREE.Vector3(...p));
     content.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(vs),
-      new THREE.LineBasicMaterial({ color: 0xffc933 })));
+      new THREE.LineBasicMaterial({ color: new THREE.Color(css('--accent')) })));
 
     // start / end markers and dashed start->end line
     const r = size * 0.025;
@@ -176,7 +176,7 @@ async function create3D(container) {
       const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), new THREE.MeshBasicMaterial({ color }));
       m.position.copy(p); content.add(m);
     };
-    ball(vs[0], 0x22c55e); ball(vs[vs.length - 1], 0xef4444);
+    ball(vs[0], new THREE.Color(css('--start'))); ball(vs[vs.length - 1], new THREE.Color(css('--end')));
     if (points2 && points2.length) {
       const vs2 = points2.map((p) => new THREE.Vector3(...p));
       content.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(vs2),
@@ -185,7 +185,7 @@ async function create3D(container) {
       m.position.copy(vs2[vs2.length - 1]); content.add(m);
     }
     const dashed = new THREE.Line(new THREE.BufferGeometry().setFromPoints([vs[0], vs[vs.length - 1]]),
-      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: size * 0.03, gapSize: size * 0.02 }));
+      new THREE.LineDashedMaterial({ color: new THREE.Color(css('--muted')), dashSize: size * 0.03, gapSize: size * 0.02 }));
     dashed.computeLineDistances();
     content.add(dashed);
 
