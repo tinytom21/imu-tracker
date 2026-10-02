@@ -2,7 +2,7 @@
 // with an IndexedDB queue so runs recorded offline are sent later. Everything degrades gracefully when
 // storage, IndexedDB or the network is missing.
 
-const config = { uploadUrl: '', inviteCode: '' };
+const config = { uploadUrl: '', inviteCode: '', updateUrl: '' };
 window.__imuConfig = config; // handy for testing: set uploadUrl at runtime
 
 const DB_NAME = 'imuTracker';
@@ -17,6 +17,7 @@ async function loadConfig() {
       const c = await r.json();
       config.uploadUrl = typeof c.uploadUrl === 'string' ? c.uploadUrl.trim().replace(/\/+$/, '') : '';
       config.inviteCode = typeof c.inviteCode === 'string' ? c.inviteCode.trim() : '';
+      config.updateUrl = typeof c.updateUrl === 'string' ? c.updateUrl.trim() : ''; // used by update.js
     }
   } catch { /* offline or missing: contributions stay off */ }
 }

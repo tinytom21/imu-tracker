@@ -34,6 +34,15 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; }
 .banner { background: var(--bad); color: #fff; padding: 12px 14px; border-radius: 12px;
   margin-bottom: 12px; font-weight: 600; overflow-wrap: anywhere; }
 
+.update { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 12px;
+  border: 1.5px solid var(--accent); border-radius: 12px; background: var(--panel); }
+.update[hidden] { display: none; }
+.update-text { flex: 1; min-width: 0; }
+.update-text span, .update-notes { color: var(--muted); font-size: 0.9rem; }
+.update-get { background: var(--accent); color: #fff; text-decoration: none; font-weight: 600;
+  padding: 8px 14px; border-radius: 10px; white-space: nowrap; }
+.update-later { background: none; border: none; color: var(--muted); font-size: 1.1rem; padding: 6px; cursor: pointer; }
+
 .big { font-size: 1.7rem; font-weight: 700; text-align: center; margin: 6px 0 12px; }
 .bar { height: 14px; background: var(--canvas); border-radius: 7px; overflow: hidden; }
 #calibBar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }

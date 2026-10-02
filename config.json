@@ -1,1 +1,5 @@
-{ "uploadUrl": "https://imu-tracker-runs.tinytom21.workers.dev", "inviteCode": "" }
+{
+  "uploadUrl": "https://imu-tracker-runs.tinytom21.workers.dev",
+  "inviteCode": "",
+  "updateUrl": "https://tinytom21.github.io/imu-tracker/version.json"
+}

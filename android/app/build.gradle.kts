@@ -73,10 +73,8 @@ dependencies {
 // Web files live in the repo root (android/app -> ../..). They are copied, never duplicated in git.
 val copyWebAssets by tasks.registering(Copy::class) {
     from(file("../..")) {
-        include(
-            "index.html", "app.js", "capture.js", "processing.js",
-            "viz.js", "style.css", "version.json"
-        )
+        // Every top-level web file (not tests/, tools/ etc.), so a new module can't be left out.
+        include("*.html", "*.js", "*.css", "*.json")
     }
     into(layout.buildDirectory.dir("generated/webassets/web"))
 }

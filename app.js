@@ -9,6 +9,11 @@ const { initContribute } = await import(`./contribute.js?v=${V}`);
 // Runs loaded from a CSV file can't be contributed (dev switch: ?devContribute=1).
 const DEV_CONTRIBUTE = new URLSearchParams(location.search).get('devContribute') === '1';
 const contributeReady = initContribute().catch((e) => { console.warn('Contribute unavailable:', e); return null; });
+// Android app: offer a newer APK if the website has one. Never allowed to break the app.
+contributeReady
+  .then(() => import(`./update.js?v=${V}`))
+  .then(({ initUpdateCheck }) => initUpdateCheck(window.__imuConfig || {}))
+  .catch((e) => console.warn('Update check unavailable:', e));
 
 const CALIB_S = 2.0;      // required continuous stillness at start
 const CALIB_WIN_S = 0.4;  // short window used to track continuous stillness

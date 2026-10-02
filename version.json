@@ -1,1 +1,6 @@
-{ "version": "0.12", "date": "2026-10-02" }
+{
+  "version": "0.13",
+  "date": "2026-10-02",
+  "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
+  "notes": "Update check on launch; fixes the app not starting in 0.11-0.12."
+}
