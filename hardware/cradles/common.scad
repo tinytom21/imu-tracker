@@ -11,7 +11,7 @@ phone_l = 146.3;     // [mm]
 phone_w = 70.9;      // [mm]
 phone_t = 7.6;       // [mm]
 case_allow = 0;      // [mm] added to each dimension for a case
-clear = 0.6;         // [mm] gap on the open (non-datum) sides
+clear = 0.5;         // [mm] gap on the open (non-datum) sides (Bambu X2D, PLA)
 
 // --- Seat ---
 plate_t = 3;         // [mm] seat plate thickness

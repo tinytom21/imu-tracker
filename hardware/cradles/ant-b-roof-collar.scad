@@ -10,7 +10,7 @@ include <common.scad>
 ant_d = 69;        // [mm]
 ant_h = 22;        // [mm]
 skin = 2.5;        // [mm]
-fit = 0.4;         // [mm]
+fit = 0.3;         // [mm] radial clearance (Bambu X2D, PLA): ~0.3 mm centring slop
 gap_top = 3;       // [mm] clearance above the radome
 foot_h = 2;        // [mm] three feet on the roof (a curved roof still gives 3 contacts)
 slot_w = 14;       // [mm] cable slot width (SMA cable exits the antenna side)
