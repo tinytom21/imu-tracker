@@ -42,27 +42,33 @@ catch { out.textContent = 'No tests/data/runs/index.json yet — run tools/fetch
 const rows = [];
 for (const r of index) {
   const { cal, rec } = parseCsv(await (await fetch(`data/runs/${r.id}.csv?v=${v}`)).text());
-  let res, err = null;
   const points = r.meta?.extra?.points || 1; // survey runs: score point 1 against the reference columns
-  try { res = processRecording(cal, rec, { loop: r.mode === 'loop', points }); } catch (e) { err = e.message; }
-  const d = res ? res.delta.map((x) => x * 1000) : null;
   const ref = r.ref_x != null ? [r.ref_x, r.ref_y, r.ref_z] : null;
-  const score = (dd, method, level) => {
-    const e = dd && ref ? dd.map((x, k) => x - ref[k]) : null;
-    rows.push({ r, d: dd, ref, e, err, method, pass: e ? e.every((x) => Math.abs(x) <= LIMIT) : null, level });
-  };
-  score(d, r.mode === 'loop' ? 'loop closure' : 'single move', res?.quality.level);
-  // 1-point loops are also scored as a single move (cut at the far point), to compare the methods.
-  if (res?.loop && points === 1) {
-    let s = null;
-    try { s = singleFromLoop(cal, rec, res); } catch { /* scored once only */ }
-    if (s) score(s.delta.map((x) => x * 1000), 'loop run, as single move', s.quality.level);
+  // Runs recorded with a sensor calibration are scored with it (primary) and without it, to compare.
+  const sc = r.meta?.extra?.sensorCal || null;
+  for (const useCal of sc ? [true, false] : [false]) {
+    let res, err = null;
+    const opts = { loop: r.mode === 'loop', points, ...(useCal ? { sensorCal: sc } : {}) };
+    try { res = processRecording(cal, rec, opts); } catch (e) { err = e.message; }
+    const calTag = !sc ? 'none' : useCal ? 'applied' : 'not applied';
+    const score = (dd, method, level, alt) => {
+      const e = dd && ref ? dd.map((x, k) => x - ref[k]) : null;
+      rows.push({ r, d: dd, ref, e, err, method, cal: calTag, alt: alt || (sc && !useCal), pass: e ? e.every((x) => Math.abs(x) <= LIMIT) : null, level });
+    };
+    score(res ? res.delta.map((x) => x * 1000) : null, r.mode === 'loop' ? 'loop closure' : 'single move', res?.quality.level);
+    // 1-point loops are also scored as a single move (cut at the far point), to compare the methods.
+    if (res?.loop && points === 1) {
+      let s = null;
+      try { s = singleFromLoop(cal, rec, res, opts); } catch { /* scored once only */ }
+      if (s) score(s.delta.map((x) => x * 1000), 'loop run, as single move', s.quality.level, true);
+    }
   }
 }
 
 const f0 = (x) => (x == null ? '' : Math.round(x));
 const scored = rows.filter((x) => x.e && !x.r.flagged_error);
-const primary = scored.filter((x) => x.method !== 'loop run, as single move'); // each run once
+const primary = scored.filter((x) => !x.alt); // each run once
+const withCal = scored.filter((x) => x.cal !== 'none' && x.method !== 'loop run, as single move');
 const groupBy = (key, from) => {
   const m = new Map();
   for (const x of from) { const k = key(x) || '(none)'; if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
@@ -81,12 +87,13 @@ const summary = (title, key, from = primary) => {
 };
 
 let html = `<p>${index.length} runs downloaded · ${rows.filter((x) => x.ref).length} results with a reference · ${scored.length} scored (not flagged). 1-point loop runs are scored twice: with loop closure, and cut at the far point as a single move.</p>`;
-html += summary('method', (x) => x.method, scored) + summary('mode', (x) => x.r.mode) + summary('sensor source', (x) => x.r.source) + summary('device', (x) => x.r.device)
+html += summary('method', (x) => x.method, scored.filter((x) => x.cal !== 'not applied'))
+  + (withCal.length ? summary('sensor calibration (runs that had one)', (x) => x.cal, withCal) : '') + summary('mode', (x) => x.r.mode) + summary('sensor source', (x) => x.r.source) + summary('device', (x) => x.r.device)
   + summary('route', (x) => x.r.route) + summary('app version (at upload)', (x) => x.r.app_version);
-html += '<h2>All runs</h2><table><tr><th>uploaded</th><th>route</th><th>method</th><th>source</th><th>device</th><th>result X / Y / Z</th><th>reference</th><th>error</th><th>quality</th><th></th></tr>';
+html += '<h2>All runs</h2><table><tr><th>uploaded</th><th>route</th><th>method</th><th>sensor cal</th><th>source</th><th>device</th><th>result X / Y / Z</th><th>reference</th><th>error</th><th>quality</th><th></th></tr>';
 for (const x of [...rows].reverse()) {
   const cls = x.pass === null ? 'muted' : x.pass ? 'pass' : 'fail';
-  html += `<tr class="${x.r.flagged_error ? 'muted' : ''}"><td>${x.r.created_at.slice(0, 16).replace('T', ' ')}</td><td>${x.r.route || ''}</td><td>${x.method}</td><td>${x.r.source || ''}</td><td>${x.r.device || ''}</td>`
+  html += `<tr class="${x.r.flagged_error ? 'muted' : ''}"><td>${x.r.created_at.slice(0, 16).replace('T', ' ')}</td><td>${x.r.route || ''}</td><td>${x.method}</td><td>${x.cal}</td><td>${x.r.source || ''}</td><td>${x.r.device || ''}</td>`
     + `<td>${x.d ? x.d.map(f0).join(' / ') : x.err}</td><td>${x.ref ? x.ref.map(f0).join(' / ') + (x.r.ref_method ? ` (${x.r.ref_method})` : '') : ''}</td>`
     + `<td class="${cls}">${x.e ? x.e.map(f0).join(' / ') : ''}</td><td>${x.level || ''}</td><td>${x.r.flagged_error ? 'flagged' : ''}</td></tr>`;
 }

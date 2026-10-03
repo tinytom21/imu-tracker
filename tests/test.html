@@ -13,7 +13,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4p
 // Cache-busted so edits to the modules are always picked up on reload.
 const v = Date.now();
 const { processRecording, singleFromLoop } = await import(`../processing.js?v=${v}`);
-const { generate, G } = await import(`./synth.js?v=${v}`);
+const { generate, generateSensorCal, G } = await import(`./synth.js?v=${v}`);
 
 const REAL = { accNoise: 0.02, accBias: [0.02, -0.015, 0.03], gyroNoise: 0.002, gyroBias: [0.003, -0.002, 0.004] };
 const D0 = [-0.02, 1.5, 0.75];
@@ -201,7 +201,41 @@ try {
     const ok = sum.outliers.length === 1 && sum.outliers[0] === 'r5' && sum.used.length === 5 && meanOk && ciOk && sugOk
       && S.summarize(runs, { include: ['r5'] }).used.length === 6 && S.summarize(runs.slice(0, 2)).outliers.length === 0;
     add({ name: '17a Session stats: outlier, mean, 95% CI, suggested accuracy', expected: 'r5 flagged; mean 500/2257.2; CI t(4)', got: `outliers ${sum.outliers.join(',')}, mean ${ax.map((a) => a.mean.toFixed(1)).join('/')}, ci ${ax.map((a) => a.ci95.toFixed(1)).join('/')}`, errText: '-', err: [0, 0, 0], tol: 'exact', extra: S.summaryText(sum, () => 'result'), status: ok ? 'PASS' : 'FAIL' });
+  }  {
+    // Sensor calibration: six faces + two flat turns with known scale/bias errors. The fit must
+    // recover them (true = raw x gain, so gain x scale = 1), to within the g-constant difference.
+    const SC = await import(`../sensorcal.js?v=${v}`);
+    const truth = { accScale: [1.02, 0.985, 1.01], accBias: [0.1, -0.15, 0.2], gyroScale: [1.015, 0.99, 1.02], gyroBias: [0.003, -0.002, 0.004] };
+    let worstA = 0, worstG = 0, worstB = 0, okAll = true;
+    for (let seed = 1; seed <= 3; seed++) {
+      const r = SC.fitSensorCal(generateSensorCal({ ...truth, seed }));
+      if (!r.ok) { okAll = false; continue; }
+      r.accGain.forEach((k, i) => { worstA = Math.max(worstA, Math.abs(k * truth.accScale[i] - 1) * 100); });
+      r.gyroGain.forEach((k, i) => { worstG = Math.max(worstG, Math.abs(k * truth.gyroScale[i] - 1) * 100); });
+      r.accBias.forEach((b, i) => { worstB = Math.max(worstB, Math.abs(b - truth.accBias[i])); });
+    }
+    const missing = SC.fitSensorCal(generateSensorCal({ ...truth, turns: [] }));
+    const ok = okAll && worstA < 0.1 && worstG < 0.05 && worstB < 0.01 && !missing.ok && /turn/.test(missing.errors.join(' '));
+    add({ name: '18a Sensor calibration fit (3 seeds)', expected: 'accel gain < 0.1 %, gyro gain < 0.05 %, bias < 0.01', got: `accel ${worstA.toFixed(3)} %, gyro ${worstG.toFixed(3)} %, bias ${worstB.toFixed(4)}`, errText: '-', err: [0, 0, 0], tol: 'as expected; no-turn run rejected', extra: missing.errors.join(' | '), status: ok ? 'PASS' : 'FAIL' });
   }
+  {
+    // End to end: the 6 s one-way reach (15a) on a phone with scale errors, with and without the
+    // calibration from the routine above.
+    const SC = await import(`../sensorcal.js?v=${v}`);
+    const errs = { accScale: LONG.accScale, gyroScale: LONG.gyroScale, accBias: LONG.accBias || [0, 0, 0], gyroBias: LONG.gyroBias || [0, 0, 0] };
+    const sc = SC.fitSensorCal(generateSensorCal({ ...errs, seed: 9 }));
+    const worst = { off: [0, 0, 0], on: [0, 0, 0] };
+    for (let seed = 1; seed <= 10; seed++) {
+      const g = generate({ ...LONG, seed, segments: [{ D: FAR, moveSec: 6, rotDeg: 50 }] });
+      for (const [k, o] of [['off', {}], ['on', { sensorCal: sc }]]) {
+        const d = processRecording(g.calibSamples, g.samples, o).delta;
+        d.forEach((x, i) => { worst[k][i] = Math.max(worst[k][i], Math.abs(x - FAR[i]) * 1000); });
+      }
+    }
+    const ok = sc.ok && Math.max(...worst.on) < 0.5 * Math.max(...worst.off);
+    add({ name: '18b 6 s reach with phone scale errors: calibration on vs off', expected: 'worst error at least halved', got: `off ${worst.off.map(f1).join('/')} → on ${worst.on.map(f1).join('/')}`, errText: worst.on.map(f1).join(', '), err: worst.on, tol: 'on < 0.5 × off', extra: '', status: ok ? 'PASS' : 'FAIL' });
+  }
+
   {
     // Loop mode but no hold at the far point: falls back with a warning.
     const g = generate({ ...LOOP, segments: [{ D: FAR, moveSec: 5, rotDeg: 30, pause: 0 }, { D: back(FAR), moveSec: 5, rotDeg: -30 }] });

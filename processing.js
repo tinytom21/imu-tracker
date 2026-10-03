@@ -205,7 +205,20 @@ function movingFlags(samples, linAccW, gyroBias) {
  * @param {Array} calibSamples stationary samples captured before Start
  * @param {Array} samples recorded samples (start hold -> move -> end hold)
  */
+// Correct raw samples with a sensor calibration (sensorcal.js): a = (raw - accBias) x accGain,
+// w = raw x gyroGain. The gyro bias is still measured at the start of every run.
+export function applySensorCal(samples, sc) {
+  if (!sc) return samples;
+  const [bx, by, bz] = sc.accBias, [kx, ky, kz] = sc.accGain, [gx, gy, gz] = sc.gyroGain;
+  return samples.map((s) => ({ ...s, ax: (s.ax - bx) * kx, ay: (s.ay - by) * ky, az: (s.az - bz) * kz,
+                               gx: s.gx * gx, gy: s.gy * gy, gz: s.gz * gz }));
+}
+
 export function processRecording(calibSamples, samples, opts = {}) {
+  if (opts.sensorCal) {
+    calibSamples = applySensorCal(calibSamples, opts.sensorCal);
+    samples = applySensorCal(samples, opts.sensorCal);
+  }
   const cal = calibrate(calibSamples);
   const warnings = [];
   let n = samples.length;

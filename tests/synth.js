@@ -129,3 +129,57 @@ export function generate(opts = {}) {
   const samples = all.filter((s) => s.t >= recStart);
   return { calibSamples, samples, truth, opts: o, moveStart, moveEnd, recStart };
 }
+
+// Sensor-calibration routine: still on each face, then flat full turns each way. Known scale/bias
+// errors are applied the same way as generate(): measured = true x scale + bias (+ noise).
+export function generateSensorCal(opts = {}) {
+  const o = { rate: 400, hold: 2.5, move: 1.5, turnSec: 4, tiltDeg: 3, turns: [1, -1],
+    accScale: [1, 1, 1], accBias: [0, 0, 0], gyroScale: [1, 1, 1], gyroBias: [0, 0, 0],
+    accNoise: 0.02, gyroNoise: 0.002, seed: 1, ...opts };
+  const rand = mulberry32(o.seed);
+  const d2r = Math.PI / 180;
+  const wobble = () => qAxisAngle([rand() - 0.5, rand() - 0.5, 0], o.tiltDeg * d2r * rand());
+  // Face orientations, device -> world, each slightly off (phones don't sit exactly square).
+  const faces = [
+    [1, 0, 0, 0], qAxisAngle([1, 0, 0], Math.PI), qAxisAngle([1, 0, 0], Math.PI / 2), qAxisAngle([1, 0, 0], -Math.PI / 2),
+    qAxisAngle([0, 1, 0], -Math.PI / 2), qAxisAngle([0, 1, 0], Math.PI / 2), [1, 0, 0, 0],
+  ].map((q) => qMul(wobble(), q));
+  // Orientation as a function of time, built from holds and moves.
+  const parts = [];
+  let t = 0;
+  const slerp = (a, b, s) => {
+    let d = a.reduce((x, v, i) => x + v * b[i], 0);
+    const bb = d < 0 ? b.map((v) => -v) : b; d = Math.abs(d);
+    if (d > 0.9995) return a.map((v, i) => v + (bb[i] - v) * s);
+    const th = Math.acos(d), s0 = Math.sin((1 - s) * th) / Math.sin(th), s1 = Math.sin(s * th) / Math.sin(th);
+    return a.map((v, i) => v * s0 + bb[i] * s1);
+  };
+  faces.forEach((q, k) => {
+    parts.push({ t0: t, t1: t + o.hold, f: () => q }); t += o.hold;
+    if (k + 1 < faces.length) { const a = q, b = faces[k + 1], t0 = t; parts.push({ t0, t1: t + o.move, f: (tt) => slerp(a, b, minJerk(tt - t0, o.move).s) }); t += o.move; }
+  });
+  const flat = faces.at(-1);
+  for (const dir of o.turns) {
+    const t0 = t;
+    parts.push({ t0, t1: t + o.turnSec, f: (tt) => qMul(qAxisAngle([0, 0, 1], dir * 2 * Math.PI * minJerk(tt - t0, o.turnSec).s), flat) });
+    t += o.turnSec;
+    parts.push({ t0: t, t1: t + o.hold, f: () => flat }); t += o.hold;
+  }
+  const qAt = (tt) => { const p = parts.find((x) => tt <= x.t1) || parts.at(-1); const q = p.f(Math.min(tt, p.t1)); const n = Math.hypot(...q); return q.map((v) => v / n); };
+  const samples = [];
+  const h = 1e-4;
+  for (let i = 0; i * (1 / o.rate) <= t; i++) {
+    const tt = i / o.rate;
+    const q = qAt(tt);
+    // Body rate from a central difference: q(t+h) = q(t) x exp(w h).
+    const dq = qMul(qInv(qAt(Math.max(0, tt - h))), qAt(tt + h));
+    const sgn = dq[0] < 0 ? -1 : 1;
+    const omega = [dq[1], dq[2], dq[3]].map((v) => sgn * 2 * v / (2 * h));
+    const f = qRot(qInv(q), [0, 0, G]);
+    const s = { t: tt };
+    ['ax', 'ay', 'az'].forEach((k, j) => { s[k] = f[j] * o.accScale[j] + o.accBias[j] + o.accNoise * gaussian(rand); });
+    ['gx', 'gy', 'gz'].forEach((k, j) => { s[k] = omega[j] * o.gyroScale[j] + o.gyroBias[j] + o.gyroNoise * gaussian(rand); });
+    samples.push(s);
+  }
+  return samples;
+}

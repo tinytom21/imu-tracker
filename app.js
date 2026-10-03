@@ -7,6 +7,7 @@ const { Capture } = await import(`./capture.js?v=${V}`);
 const { createViz } = await import(`./viz.js?v=${V}`);
 const { initContribute } = await import(`./contribute.js?v=${V}`);
 const { summarize, summaryText } = await import(`./session.js?v=${V}`);
+const { initSensorCalUI, activeSensorCal } = await import(`./calui.js?v=${V}`);
 // Runs loaded from a CSV file can't be contributed (dev switch: ?devContribute=1).
 const DEV_CONTRIBUTE = new URLSearchParams(location.search).get('devContribute') === '1';
 const contributeReady = initContribute().catch((e) => { console.warn('Contribute unavailable:', e); return null; });
@@ -73,7 +74,9 @@ const el = {
 // Loop mode can visit 1-3 points (e.g. antenna 1, antenna 2) before returning to the start.
 let numPoints = 1;
 try { const n = +localStorage.getItem('imuPoints'); if (n >= 1 && n <= 3) numPoints = n; } catch { /* ignore */ }
-const loopOpts = () => (loopMode ? { loop: true, points: numPoints } : undefined);
+// Sensor calibration (calui.js) goes into every processing call while it is switched on.
+const calField = () => { const c = activeSensorCal(); return c ? { sensorCal: { accBias: c.accBias, accGain: c.accGain, gyroGain: c.gyroGain } } : {}; };
+const loopOpts = () => ({ ...(loopMode ? { loop: true, points: numPoints } : {}), ...calField() });
 const ptName = (k) => (numPoints === 2 ? `antenna ${k}` : `point ${k}`);
 
 function renderLoopSteps() {
@@ -151,6 +154,7 @@ function loadSession() {
       ...(okPt(r.values.single) && r.singleQuality ? { singleQuality: String(r.singleQuality) } : {}),
       quality: String(r.quality || ''), warnings: Array.isArray(r.warnings) ? r.warnings.map(String) : [],
       loopGapMm: Number.isFinite(r.loopGapMm) ? r.loopGapMm : null,
+      ...(r.sensorCal ? { sensorCal: true } : {}),
     }));
     const ids = runs.map((r) => r.id);
     const s = blankSession(o.mode === 'loop' ? 'loop' : 'single', o.mode === 'loop' && o.points >= 1 && o.points <= 3 ? +o.points : 1);
@@ -211,6 +215,7 @@ function setCurrentRun(res, source, survey, single) {
     singleQuality: single ? single.quality.level : '',
     quality: res.quality.level, warnings: [...res.quality.warnings],
     loopGapMm: res.loop && Number.isFinite(res.loop.gapMm) ? Math.round(res.loop.gapMm) : null,
+    sensorCal: !!activeSensorCal(),
     key: uiKey(), allowed: !String(source).startsWith('csv') || DEV_CONTRIBUTE, added: null,
   };
   updateAddButton();
@@ -229,7 +234,7 @@ el.sessAdd.addEventListener('click', () => {
   if (!c || c.added !== null || c.key !== uiKey()) return;
   if (!sess.runs.length) sess = blankSession(loopMode ? 'loop' : 'single', loopMode ? numPoints : 1);
   const id = sess.nextId++;
-  sess.runs.push({ id, time: Date.now(), values: c.values, quality: c.quality, warnings: c.warnings, loopGapMm: c.loopGapMm,
+  sess.runs.push({ id, time: Date.now(), values: c.values, quality: c.quality, warnings: c.warnings, loopGapMm: c.loopGapMm, sensorCal: c.sensorCal,
     ...(c.values.single ? { singleQuality: c.singleQuality } : {}) });
   c.added = id;
   saveSession(); renderSession();
@@ -299,7 +304,7 @@ function renderSession() {
     const vals = r.values.points.map((p, i) => `${multi ? `P${i + 1}: ` : ''}X ${fmtMm(p[0])} · Y ${fmtMm(p[1])} · Z ${fmtMm(p[2])}`).join('<br>');
     const status = exc ? 'left out' : out && !inc ? 'outlier — not used' : out ? 'outlier — used anyway' : '';
     h += `<li class="sess-run${exc || (out && !inc) ? ' off' : ''}"><div class="sess-run-head"><b>Run ${r.id}</b><span>${esc(fmtTime(r.time))}</span>`
-      + `${r.quality ? `<span class="badge ${esc(r.quality)} mini">${esc(r.quality)}</span>` : ''}<button type="button" class="sess-x" data-act="del" data-id="${r.id}" aria-label="Delete run ${r.id}">✕</button></div>`
+      + `${r.quality ? `<span class="badge ${esc(r.quality)} mini">${esc(r.quality)}</span>` : ''}${r.sensorCal ? '<span title="Sensor calibration applied">cal</span>' : ''}<button type="button" class="sess-x" data-act="del" data-id="${r.id}" aria-label="Delete run ${r.id}">✕</button></div>`
       + `<div class="sess-vals">${vals}</div>${r.values.single ? `<div class="sess-vals sess-single">Single: X ${fmtMm(r.values.single[0])} · Y ${fmtMm(r.values.single[1])} · Z ${fmtMm(r.values.single[2])}</div>` : ''}${status ? `<div class="sess-status">${status}</div>` : ''}<div class="sess-actions">`
       + (out && !exc ? `<button type="button" class="sess-btn" data-act="${inc ? 'unincl' : 'incl'}" data-id="${r.id}">${inc ? 'Ignore again' : 'Use anyway'}</button>` : '')
       + `<button type="button" class="sess-btn" data-act="${exc ? 'unexcl' : 'excl'}" data-id="${r.id}">${exc ? 'Use' : 'Leave out'}</button></div></li>`;
@@ -610,6 +615,7 @@ function finishRun() {
 }
 
 // ---------------------------------------------------------------- results
+const calDate = (iso) => { try { return new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' }); } catch { return ''; } };
 const mm = (m) => Math.round(m * 1000);
 function signed(v) {
   const r = mm(v);
@@ -629,7 +635,7 @@ function showResult(calib, rec, source) {
   let fused = null, fusedErr = null;
   if (hasQ) {
     try {
-      fused = processRecording(calib, rec, { orientation: 'fused', ...(loopMode ? { loop: true, points: numPoints } : {}) });
+      fused = processRecording(calib, rec, { orientation: 'fused', ...(loopMode ? { loop: true, points: numPoints } : {}), ...calField() });
     } catch (e) {
       fusedErr = e.message || String(e);
     }
@@ -789,6 +795,8 @@ function showResult(calib, rec, source) {
       details.splice(1, 0, ['Gap shared by', L.shareRule === 'drift' ? 'measured drift' : L.shareRule === 'time2' ? 'leg time' : String(L.shareRule)]);
     }
   }
+  const usedCal = activeSensorCal();
+  if (usedCal) details.push(['Sensor calibration', `applied (${calDate(usedCal.created)})`]);
   if (window.AndroidIMU) {
     try {
       const i = JSON.parse(window.AndroidIMU.info());
@@ -819,6 +827,7 @@ async function offerContribution(res, calib, rec, source, loop, points = 1) {
   const fromFile = String(source).startsWith('csv');
   if (fromFile && !DEV_CONTRIBUTE) { c.hide(); return; }
   const num = (v) => (Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null);
+  const usedCal = activeSensorCal();
   c.show({
     allowed: true,
     points,
@@ -836,6 +845,7 @@ async function offerContribution(res, calib, rec, source, loop, points = 1) {
         warnings: res.quality.warnings.slice(0, 20),
         reference: null,
         extra: {
+          sensorCal: usedCal,
           points,
           loop: L ? {
             gapMm: num(L.gapMm), tiltOffDeg: num(L.tiltOffDeg), headingOffDeg: num(L.headingOffDeg),
@@ -971,6 +981,12 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && (state === 'calibrating' || state === 'recording')) acquireWakeLock();
 });
 setState('idle');
+initSensorCalUI({
+  Capture, acquireWakeLock, releaseWakeLock,
+  getDevice: async () => (await contributeReady)?.deviceModel?.(),
+  isBusy: () => state === 'starting' || state === 'calibrating' || state === 'recording',
+  onChange: () => {},
+});
 createViz({ view3d: $('view3d'), plotTop: $('plotTop'), plotSide: $('plotSide'), legend: $('legend') })
   .then((v) => { viz = v; })
   .catch((e) => showError('Visualisation failed: ' + e.message));

@@ -176,3 +176,33 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; font-weight: 700; }
   border: 1px solid var(--border); border-radius: 8px; }
 .sess-err { margin: 6px 0 0; font-weight: 400; }
 .sess-err li { margin-bottom: 4px; }
+
+.calstat { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.calstat .rows-label b { color: var(--text); }
+.cal-toggle { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: .95rem; }
+.cal-toggle input { width: 20px; height: 20px; margin: 0; }
+.cal-figs { margin-top: 10px; }
+body.cal-open #idle, body.cal-open #main, body.cal-open #result, body.cal-open #session, body.cal-open .tools { display: none; }
+.calr h2 { font-size: 1.1rem; margin: 0 0 8px; }
+.cal-faces { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.cal-faces li { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 2px 10px; padding: 6px 10px;
+  border: 1.5px solid var(--border); border-radius: 10px; }
+.cal-faces li.cur { border-color: var(--accent); }
+.cal-faces li.done { border-color: var(--ok); }
+.cal-faces .bar { grid-column: 1 / -1; height: 6px; }
+.cal-faces .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+.cal-faces li.done .bar > div { background: var(--ok); }
+.cal-name { font-weight: 600; }
+.cal-state { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cal-faces li.done .cal-state { color: var(--ok); font-weight: 700; }
+.cal-ico { width: 32px; height: 30px; fill: var(--canvas); stroke: var(--muted); stroke-width: 1.5; }
+.cal-ico .up { stroke: var(--accent); stroke-width: 3; fill: none; stroke-linecap: round; }
+.cal-ico .gr { stroke: var(--grid); stroke-width: 1.5; fill: none; }
+.cal-turns-box { margin-top: 16px; }
+.cal-angle { font-size: 1.6rem; font-weight: 700; text-align: center; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.cal-turns { list-style: none; margin: 0; padding: 0; display: flex; gap: 8px; }
+.cal-turns li { flex: 1; text-align: center; padding: 8px; border: 1.5px solid var(--border); border-radius: 10px; font-weight: 600; color: var(--muted); }
+.cal-turns li.done { border-color: var(--ok); color: var(--ok); }
+.cal-actions { display: grid; gap: 10px; margin-top: 14px; }
+.cal-actions .primary { margin-top: 0; }
+.cal-plain { font-weight: 600; margin: 6px 0; }

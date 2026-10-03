@@ -1,6 +1,6 @@
 {
-  "version": "0.18",
-  "date": "2026-10-03",
+  "version": "0.19",
+  "date": "2026-10-04",
   "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
-  "notes": "Loop runs with 1 point are also shown as a single move, to compare the two methods."
+  "notes": "Sensor calibration: six faces and two turns correct the phone's own accelerometer and gyro scale errors."
 }
