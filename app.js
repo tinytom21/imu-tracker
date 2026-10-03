@@ -107,6 +107,13 @@ function setPoints(n, save = true) {
 }
 for (const b of el.pointsRow.querySelectorAll('[data-points]')) b.addEventListener('click', () => guardChange(loopMode, +b.dataset.points, () => setPoints(+b.dataset.points)));
 
+// Instructions fold away so Start stays on screen; open/closed is remembered.
+{
+  const howto = $('howto');
+  try { howto.open = localStorage.getItem('imuHowto') === '1'; } catch { /* ignore */ }
+  howto.addEventListener('toggle', () => { try { localStorage.setItem('imuHowto', howto.open ? '1' : '0'); } catch { /* ignore */ } });
+}
+
 // Loop mode: go A -> B, hold, return to exactly A, hold. Persisted across reloads.
 let loopMode = false;
 try { loopMode = localStorage.getItem('imuMode') === 'loop'; } catch { /* storage unavailable */ }
@@ -434,6 +441,7 @@ const clearError = () => { el.banner.hidden = true; };
 
 function setState(s) {
   state = s;
+  el.main.classList.toggle('pin', s === 'idle');
   el.idle.hidden = s !== 'idle' && s !== 'result';
   el.calib.hidden = s !== 'calibrating';
   el.rec.hidden = s !== 'recording';

@@ -251,10 +251,10 @@ export function initSensorCalUI({ Capture, acquireWakeLock, releaseWakeLock, get
 
   function renderStatus() {
     const c = loadSensorCal(), on = calOn();
-    let h = `<div class="rows-label">Sensor calibration: <b>${c ? (on ? 'on' : 'off') + (c.created ? ` (${esc(shortDate(c.created))})` : '') : 'not done'}</b></div>`;
-    if (c) h += `<label class="cal-toggle"><input type="checkbox" data-act="toggle"${on ? ' checked' : ''}> Apply calibration</label>`;
-    h += `<p class="cmp-note">${c ? 'Corrects your phone\'s own accelerometer and gyro scale errors in every measurement.' : 'About 2 minutes. Corrects your phone\'s own accelerometer and gyro scale errors, which otherwise skew every measurement.'}</p>`;
-    h += `<div class="sess-actions"><button type="button" class="sess-btn" data-act="open">${c ? 'Recalibrate' : 'Calibrate sensors'}</button>`;
+    let h = `<div class="calrow"><span class="rows-label">Sensor calibration: <b>${c ? (on ? 'on' : 'off') + (c.created ? ` (${esc(shortDate(c.created))})` : '') : 'not done'}</b></span>`;
+    if (c) h += `<label class="cal-toggle"><input type="checkbox" data-act="toggle"${on ? ' checked' : ''}> Apply</label>`;
+    h += '</div>';
+    h += `<div class="sess-actions"><button type="button" class="sess-btn" data-act="open">${c ? 'Recalibrate' : 'Calibrate (2 min)'}</button>`;
     if (c) h += `<button type="button" class="sess-btn" data-act="figs">${showFigs ? 'Hide figures' : 'View figures'}</button>`;
     if (c && !askDelete) h += '<button type="button" class="sess-btn" data-act="del">Delete</button>';
     h += '</div>';
