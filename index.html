@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@600;700&family=Wix+Madefor+Text:wght@400;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=0.16">
+  <link rel="stylesheet" href="style.css?v=0.17">
   <script type="importmap">
   {
     "imports": {
@@ -38,6 +38,7 @@
           <button type="button" class="seg-btn" role="radio" aria-checked="false" data-points="3">3</button>
         </div>
       </div>
+      <div id="sessModeAsk" class="sess-confirm" role="alertdialog" hidden></div>
       <ol class="steps" id="stepsLoop" hidden></ol>
       <ol class="steps" id="stepsSingle">
         <li>Place the phone <b>flat</b> and line it up against a straight edge (table edge, box, ruler), with the <b>top of the phone</b> pointing the way you want to call <b>+Y</b>.</li>
@@ -83,6 +84,7 @@
         <div class="total" id="total"></div>
         <div class="badge-line"><span id="badge" class="badge">good</span></div>
         <ul id="warnings" class="warnings"></ul>
+        <button id="sessAdd" class="primary" type="button" hidden>Add to session</button>
         <dl id="details" class="details"></dl>
       </div>
       <section id="contrib" class="panel contrib" hidden>
@@ -131,6 +133,11 @@
           <figure><canvas id="plotSide"></canvas><figcaption>Side view (Y → , Z ↑)</figcaption></figure>
         </div>
       </div>
+    </section>
+
+    <section id="session" class="panel session" hidden>
+      <h2 id="sessTitle">Session</h2>
+      <div id="sessBody"></div>
     </section>
 
     <section class="tools">

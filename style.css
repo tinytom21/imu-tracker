@@ -140,4 +140,31 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; font-weight: 700; }
 .secondary:disabled { opacity: .5; cursor: default; }
 .filebtn input { display: none; }
 
+.primary { display: block; width: 100%; min-height: 52px; margin-top: 12px; padding: 12px; font: inherit; font-size: 1rem;
+  font-weight: 700; color: #fff; background: var(--accent); border: 0; border-radius: 12px; cursor: pointer; }
+.primary:disabled { opacity: .6; cursor: default; }
+
+.session h2 { font-size: 1.1rem; margin: 0 0 8px; }
+.sess-table th, .sess-table td { font-size: .95rem; }
+.sess-table thead th { font-size: .75rem; line-height: 1.15; vertical-align: bottom; }
+.session .baselines { font-size: .95rem; }
+.sess-runs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.sess-run { border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; font-size: .85rem; min-width: 0; }
+.sess-run.off { opacity: .6; }
+.sess-run-head { display: flex; align-items: center; gap: 8px; }
+.sess-run-head span { color: var(--muted); }
+.sess-x { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 1rem; padding: 4px 8px; cursor: pointer; }
+.badge.mini { padding: 0 8px; font-size: .7rem; }
+.sess-vals { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; margin-top: 2px; }
+.sess-status { color: var(--warn); font-weight: 600; margin-top: 2px; }
+.sess-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.sess-btn { font: inherit; font-size: .85rem; font-weight: 600; padding: 6px 12px; min-height: 34px; color: var(--text);
+  background: var(--canvas); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.sess-btn.danger { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sess-foot { display: grid; gap: 8px; margin-top: 12px; }
+.sess-confirm { border: 1.5px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin-bottom: 12px; }
+.sess-foot .sess-confirm { margin-bottom: 0; }
+.sess-confirm p { margin: 0; font-size: .95rem; }
+.sess-msg { margin-top: 8px; overflow-wrap: anywhere; }
+
 .version { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 1.5rem 0 0.5rem; }

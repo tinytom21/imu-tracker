@@ -189,6 +189,20 @@ try {
     add({ name: '16b Survey expecting 2 points, only 1 hold: warns', expected: '1 point + warning', got: `${r.loop ? r.loop.points.length : 0} point(s)`, errText: '-', err: [0, 0, 0], tol: 'warning present', extra: r.quality.warnings.join(' | '), status: ok ? 'PASS' : 'FAIL' });
   }
   {
+    // Session statistics: five runs plus one obvious outlier.
+    const S = await import(`../session.js?v=${v}`);
+    const runs = [[500, 2250, 860], [510, 2262, 855], [495, 2249, 862], [505, 2270, 858], [490, 2255, 866], [700, 2400, 700]]
+      .map((p, i) => ({ id: `r${i}`, points: [p] }));
+    const sum = S.summarize(runs);
+    const ax = sum.points[0];
+    const meanOk = Math.abs(ax[0].mean - 500) < 0.01 && Math.abs(ax[1].mean - 2257.2) < 0.01;
+    const ciOk = Math.abs(ax[0].ci95 - 2.78 * Math.sqrt(62.5) / Math.sqrt(5)) < 0.01;          // SD of 500,510,495,505,490 = sqrt(62.5)
+    const sugOk = Math.abs(ax[2].suggested - Math.hypot(ax[2].ci95, S.SYSTEMATIC_MM[2])) < 1e-9;
+    const ok = sum.outliers.length === 1 && sum.outliers[0] === 'r5' && sum.used.length === 5 && meanOk && ciOk && sugOk
+      && S.summarize(runs, { include: ['r5'] }).used.length === 6 && S.summarize(runs.slice(0, 2)).outliers.length === 0;
+    add({ name: '17a Session stats: outlier, mean, 95% CI, suggested accuracy', expected: 'r5 flagged; mean 500/2257.2; CI t(4)', got: `outliers ${sum.outliers.join(',')}, mean ${ax.map((a) => a.mean.toFixed(1)).join('/')}, ci ${ax.map((a) => a.ci95.toFixed(1)).join('/')}`, errText: '-', err: [0, 0, 0], tol: 'exact', extra: S.summaryText(sum, () => 'result'), status: ok ? 'PASS' : 'FAIL' });
+  }
+  {
     // Loop mode but no hold at the far point: falls back with a warning.
     const g = generate({ ...LOOP, segments: [{ D: FAR, moveSec: 5, rotDeg: 30, pause: 0 }, { D: back(FAR), moveSec: 5, rotDeg: -30 }] });
     const r = processRecording(g.calibSamples, g.samples, { loop: true });

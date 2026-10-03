@@ -6,6 +6,7 @@ const { stillnessOf, processRecording, calibrate, windowIsStill, STILL_WINDOW_S,
 const { Capture } = await import(`./capture.js?v=${V}`);
 const { createViz } = await import(`./viz.js?v=${V}`);
 const { initContribute } = await import(`./contribute.js?v=${V}`);
+const { summarize, summaryText } = await import(`./session.js?v=${V}`);
 // Runs loaded from a CSV file can't be contributed (dev switch: ?devContribute=1).
 const DEV_CONTRIBUTE = new URLSearchParams(location.search).get('devContribute') === '1';
 const contributeReady = initContribute().catch((e) => { console.warn('Contribute unavailable:', e); return null; });
@@ -65,6 +66,7 @@ const el = {
   dl: $('dl'), csv: $('csv'),
   modeSingle: $('modeSingle'), modeLoop: $('modeLoop'), stepsLoop: $('stepsLoop'), stepsSingle: $('stepsSingle'),
   modeBadge: $('modeBadge'), rowsLabel: $('rowsLabel'),
+  session: $('session'), sessTitle: $('sessTitle'), sessBody: $('sessBody'), sessAdd: $('sessAdd'), sessModeAsk: $('sessModeAsk'),
   pointsRow: $('pointsRow'), survey: $('survey'), surveyTable: $('surveyTable'), baselines: $('baselines'),
 };
 
@@ -100,7 +102,7 @@ function setPoints(n, save = true) {
   renderLoopSteps();
   if (save) { try { localStorage.setItem('imuPoints', String(n)); } catch { /* ignore */ } }
 }
-for (const b of el.pointsRow.querySelectorAll('[data-points]')) b.addEventListener('click', () => setPoints(+b.dataset.points));
+for (const b of el.pointsRow.querySelectorAll('[data-points]')) b.addEventListener('click', () => guardChange(loopMode, +b.dataset.points, () => setPoints(+b.dataset.points)));
 
 // Loop mode: go A -> B, hold, return to exactly A, hold. Persisted across reloads.
 let loopMode = false;
@@ -114,8 +116,8 @@ function setMode(loop, save = true) {
   el.stepsSingle.hidden = loop;
   if (save) { try { localStorage.setItem('imuMode', loop ? 'loop' : 'single'); } catch { /* ignore */ } }
 }
-el.modeSingle.addEventListener('click', () => setMode(false));
-el.modeLoop.addEventListener('click', () => setMode(true));
+el.modeSingle.addEventListener('click', () => guardChange(false, 1, () => setMode(false)));
+el.modeLoop.addEventListener('click', () => guardChange(true, numPoints, () => setMode(true)));
 setMode(loopMode, false);
 setPoints(numPoints, false);
 
@@ -132,6 +134,234 @@ let cpFlashUntil = 0;
 let audioCtx = null;
 let sourceLabel = '–';
 let viz = null;
+
+// ---------------------------------------------------------------- session (repeat runs -> mean +/- error bar)
+const SESS_KEY = 'imuSession';
+const blankSession = (mode = 'single', points = 1) => ({ mode, points, runs: [], include: [], exclude: [], nextId: 1 });
+function loadSession() {
+  try {
+    const o = JSON.parse(localStorage.getItem(SESS_KEY));
+    if (!o || !Array.isArray(o.runs)) return blankSession();
+    const okPt = (p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+    const runs = o.runs.filter((r) => r && Number.isFinite(r.id) && r.values && Array.isArray(r.values.points)
+      && r.values.points.length && r.values.points.every(okPt)).map((r) => ({
+      id: r.id, time: +r.time || 0,
+      values: { points: r.values.points, baselines: Array.isArray(r.values.baselines) ? r.values.baselines.filter((b) => b && Number.isFinite(b.mm)) : [] },
+      quality: String(r.quality || ''), warnings: Array.isArray(r.warnings) ? r.warnings.map(String) : [],
+      loopGapMm: Number.isFinite(r.loopGapMm) ? r.loopGapMm : null,
+    }));
+    const ids = runs.map((r) => r.id);
+    const s = blankSession(o.mode === 'loop' ? 'loop' : 'single', o.mode === 'loop' && o.points >= 1 && o.points <= 3 ? +o.points : 1);
+    s.runs = runs;
+    s.include = (Array.isArray(o.include) ? o.include : []).filter((i) => ids.includes(i));
+    s.exclude = (Array.isArray(o.exclude) ? o.exclude : []).filter((i) => ids.includes(i));
+    s.nextId = Math.max(+o.nextId || 1, ...ids.map((i) => i + 1), 1);
+    return s;
+  } catch { return blankSession(); }
+}
+let sess = loadSession();
+let currentRun = null;        // result on screen: { values, quality, warnings, loopGapMm, key, allowed, added }
+let askClear = false;
+let pendingChange = null;
+const saveSession = () => { try { localStorage.setItem(SESS_KEY, JSON.stringify(sess)); } catch { /* ignore */ } };
+const keyOf = (loop, n) => (loop ? `loop${n}` : 'single');
+const uiKey = () => keyOf(loopMode, numPoints);
+const sessKey = () => keyOf(sess.mode === 'loop', sess.points);
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// A session belongs to one mode + point count: show the screen to match it.
+if (sess.runs.length) {
+  setMode(sess.mode === 'loop', false);
+  if (sess.mode === 'loop') setPoints(sess.points, false);
+}
+
+function guardChange(newLoop, newPts, apply) {
+  const newKey = keyOf(newLoop, newPts);
+  el.sessModeAsk.hidden = true; pendingChange = null;
+  if (newKey === uiKey() || !sess.runs.length || newKey === sessKey()) { apply(); renderSession(); return; }
+  pendingChange = { apply, newLoop, newPts };
+  el.sessModeAsk.innerHTML = `<p>Start a new session? Your ${sess.runs.length} saved run${sess.runs.length === 1 ? '' : 's'} will be cleared.</p>
+    <div class="sess-actions"><button type="button" class="sess-btn danger" data-act="modeYes">Start new session</button><button type="button" class="sess-btn" data-act="modeNo">Cancel</button></div>`;
+  el.sessModeAsk.hidden = false;
+}
+el.sessModeAsk.addEventListener('click', (e) => {
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (!act) return;
+  if (act === 'modeYes' && pendingChange) {
+    const { apply, newLoop, newPts } = pendingChange;
+    sess = blankSession(newLoop ? 'loop' : 'single', newLoop ? newPts : 1);
+    saveSession(); apply();
+  }
+  pendingChange = null; el.sessModeAsk.hidden = true; renderSession();
+});
+
+function setCurrentRun(res, source, survey) {
+  const pts = survey ? res.loop.points : [res.delta];
+  currentRun = {
+    values: {
+      points: pts.map((p) => p.map(mm)),
+      baselines: survey ? (res.loop.baselines || []).map((b) => ({ from: b.from, to: b.to, mm: Math.round(b.mm * 10) / 10 })) : [],
+    },
+    quality: res.quality.level, warnings: [...res.quality.warnings],
+    loopGapMm: res.loop && Number.isFinite(res.loop.gapMm) ? Math.round(res.loop.gapMm) : null,
+    key: uiKey(), allowed: !String(source).startsWith('csv') || DEV_CONTRIBUTE, added: null,
+  };
+  updateAddButton();
+  renderSession();
+}
+function updateAddButton() {
+  const c = currentRun;
+  el.sessAdd.hidden = !c || !c.allowed;
+  if (el.sessAdd.hidden) return;
+  if (c.added !== null && !sess.runs.some((r) => r.id === c.added)) c.added = null;
+  el.sessAdd.disabled = c.added !== null || c.key !== uiKey();
+  el.sessAdd.textContent = c.added !== null ? `Added ✓ (run ${c.added})` : c.key !== uiKey() ? 'Mode changed — repeat the run' : 'Add to session';
+}
+el.sessAdd.addEventListener('click', () => {
+  const c = currentRun;
+  if (!c || c.added !== null || c.key !== uiKey()) return;
+  if (!sess.runs.length) sess = blankSession(loopMode ? 'loop' : 'single', loopMode ? numPoints : 1);
+  const id = sess.nextId++;
+  sess.runs.push({ id, time: Date.now(), values: c.values, quality: c.quality, warnings: c.warnings, loopGapMm: c.loopGapMm });
+  c.added = id;
+  saveSession(); renderSession();
+});
+
+const sessSummary = () => summarize(sess.runs.map((r) => ({ id: r.id, points: r.values.points, baselines: r.values.baselines })),
+  { include: sess.include, exclude: sess.exclude });
+const ptLabel = (p) => (sess.mode === 'loop' && sess.points >= 2 ? `Point ${p + 1}` : 'Result');
+const fmtMm = (v) => (Number.isFinite(v) ? (Math.round(v) < 0 ? MINUS : '') + Math.abs(Math.round(v)) : '–');
+const fmtTime = (t) => { try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+
+function renderSession() {
+  const runs = sess.runs;
+  el.session.hidden = !runs.length || state === 'calibrating' || state === 'recording';
+  updateAddButton();
+  if (el.session.hidden) return;
+  const sum = sessSummary();
+  el.sessTitle.textContent = `Session · ${runs.length} run${runs.length === 1 ? '' : 's'} (${sum.used.length} used)`;
+  let h = '';
+  if (sum.used.length >= 3 && sum.points.length) {
+    sum.points.forEach((ax, p) => {
+      h += `<div class="rows-label">${esc(ptLabel(p))}</div><table class="cmp-table sess-table"><thead><tr><th></th><th>Mean</th><th>± accuracy</th><th>Run-to-run SD</th></tr></thead><tbody>`;
+      ['X', 'Y', 'Z'].forEach((name, a) => {
+        const s = ax[a];
+        h += `<tr><th>${name}</th><td>${fmtMm(s.mean)}</td><td><b>± ${fmtMm(s.suggested)}</b></td><td>${fmtMm(s.std)}</td></tr>`;
+      });
+      h += '</tbody></table><div class="cmp-unit">mm</div>';
+    });
+    if (sum.baselines.length) {
+      h += '<ul class="baselines">' + sum.baselines.map((b) => `<li>Point ${b.from} ↔ Point ${b.to}: ${fmtMm(b.mean)} ± ${fmtMm(b.ci95)} mm</li>`).join('') + '</ul>';
+    }
+    h += '<p class="cmp-note">± accuracy combines the spread between runs with a field-measured systematic allowance (60/60/40 mm), so it stays honest when the runs agree closely but share an offset.</p>';
+  } else {
+    h += '<p class="cmp-note">Do at least 3 runs to get an accuracy figure.</p>';
+  }
+  h += '<ul class="sess-runs">';
+  for (const r of [...runs].reverse()) {
+    const out = sum.outliers.includes(r.id), inc = sess.include.includes(r.id), exc = sess.exclude.includes(r.id);
+    const multi = r.values.points.length > 1;
+    const vals = r.values.points.map((p, i) => `${multi ? `P${i + 1}: ` : ''}X ${fmtMm(p[0])} · Y ${fmtMm(p[1])} · Z ${fmtMm(p[2])}`).join('<br>');
+    const status = exc ? 'left out' : out && !inc ? 'outlier — not used' : out ? 'outlier — used anyway' : '';
+    h += `<li class="sess-run${exc || (out && !inc) ? ' off' : ''}"><div class="sess-run-head"><b>Run ${r.id}</b><span>${esc(fmtTime(r.time))}</span>`
+      + `${r.quality ? `<span class="badge ${esc(r.quality)} mini">${esc(r.quality)}</span>` : ''}<button type="button" class="sess-x" data-act="del" data-id="${r.id}" aria-label="Delete run ${r.id}">✕</button></div>`
+      + `<div class="sess-vals">${vals}</div>${status ? `<div class="sess-status">${status}</div>` : ''}<div class="sess-actions">`
+      + (out && !exc ? `<button type="button" class="sess-btn" data-act="${inc ? 'unincl' : 'incl'}" data-id="${r.id}">${inc ? 'Ignore again' : 'Use anyway'}</button>` : '')
+      + `<button type="button" class="sess-btn" data-act="${exc ? 'unexcl' : 'excl'}" data-id="${r.id}">${exc ? 'Use' : 'Leave out'}</button></div></li>`;
+  }
+  h += '</ul><div class="sess-foot">';
+  h += '<button type="button" class="secondary" data-act="copy">Copy summary</button>';
+  h += '<button type="button" class="secondary" data-act="csv">Download session CSV</button>';
+  h += askClear
+    ? `<div class="sess-confirm"><p>Clear all ${runs.length} run${runs.length === 1 ? '' : 's'}?</p><div class="sess-actions"><button type="button" class="sess-btn danger" data-act="clearYes">Yes, clear</button><button type="button" class="sess-btn" data-act="clearNo">Cancel</button></div></div>`
+    : '<button type="button" class="secondary" data-act="clear">Clear session</button>';
+  h += '</div><p class="version sess-msg" id="sessMsg" hidden></p>';
+  el.sessBody.innerHTML = h;
+}
+
+function sessionCsv() {
+  const sum = sessSummary();
+  const runs = sess.runs;
+  const nP = Math.max(...runs.map((r) => r.values.points.length));
+  const withB = runs.reduce((a, r) => (r.values.baselines.length > a.values.baselines.length ? r : a), runs[0]);
+  const bNames = withB.values.baselines.map((b) => `baseline_${b.from}_${b.to}_mm`);
+  const head = ['run', 'time', 'quality', 'loop_gap_mm', 'status'];
+  for (let p = 1; p <= nP; p++) head.push(`p${p}_x_mm`, `p${p}_y_mm`, `p${p}_z_mm`);
+  head.push(...bNames);
+  const lines = [head.join(',')];
+  for (const r of runs) {
+    const out = sum.outliers.includes(r.id), inc = sess.include.includes(r.id), exc = sess.exclude.includes(r.id);
+    const row = [r.id, new Date(r.time).toISOString(), r.quality, r.loopGapMm ?? '', exc ? 'left_out' : out && !inc ? 'outlier' : 'used'];
+    for (let p = 0; p < nP; p++) row.push(...(r.values.points[p] || ['', '', '']));
+    for (let b = 0; b < bNames.length; b++) row.push(r.values.baselines[b]?.mm ?? '');
+    lines.push(row.join(','));
+  }
+  if (sum.used.length >= 1) {
+    const v = (x) => (Number.isFinite(x) ? Math.round(x * 10) / 10 : '');
+    for (const [name, f] of [['mean', (s) => s.mean], ['accuracy', (s) => s.suggested], ['run_sd', (s) => s.std]]) {
+      const row = [name, '', '', '', `${sum.used.length}_of_${sum.runs}`];
+      for (let p = 0; p < nP; p++) row.push(...(sum.points[p] ? sum.points[p].map((s) => v(f(s))) : ['', '', '']));
+      for (let b = 0; b < bNames.length; b++) {
+        const bs = sum.baselines[b];
+        row.push(bs ? v(name === 'mean' ? bs.mean : name === 'accuracy' ? bs.ci95 : bs.std) : '');
+      }
+      lines.push(row.join(','));
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall back */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+el.sessBody.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const act = btn.dataset.act, id = +btn.dataset.id;
+  const without = (arr) => arr.filter((i) => i !== id);
+  const add = (arr) => (arr.includes(id) ? arr : [...arr, id]);
+  if (act === 'incl') sess.include = add(sess.include);
+  else if (act === 'unincl') sess.include = without(sess.include);
+  else if (act === 'excl') sess.exclude = add(sess.exclude);
+  else if (act === 'unexcl') sess.exclude = without(sess.exclude);
+  else if (act === 'del') { sess.runs = sess.runs.filter((r) => r.id !== id); sess.include = without(sess.include); sess.exclude = without(sess.exclude); }
+  else if (act === 'clear') { askClear = true; return renderSession(); }
+  else if (act === 'clearNo') { askClear = false; return renderSession(); }
+  else if (act === 'clearYes') { askClear = false; sess = blankSession(sess.mode, sess.points); }
+  else if (act === 'copy') {
+    const ok = await copyText(summaryText(sessSummary(), ptLabel));
+    btn.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => { if (btn.isConnected) btn.textContent = 'Copy summary'; }, 1500);
+    return;
+  } else if (act === 'csv') {
+    const name = `offset-session-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+    const text = sessionCsv();
+    const msg = $('sessMsg');
+    if (window.AndroidIMU) {
+      try {
+        const r = JSON.parse(window.AndroidIMU.saveCsv(name, text));
+        if (r.ok) { clearError(); msg.textContent = 'Saved to ' + r.path; msg.hidden = false; }
+        else showError('Could not save CSV: ' + (r.error || 'unknown error'));
+      } catch (err) { showError('Could not save CSV: ' + (err.message || err)); }
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    return;
+  }
+  saveSession(); renderSession();
+});
 
 // ---------------------------------------------------------------- helpers
 function showError(msg) {
@@ -150,6 +380,7 @@ function setState(s) {
   el.main.textContent = { idle: 'Start', starting: 'Starting…', calibrating: 'Cancel', recording: 'Stop', result: 'Start' }[s];
   // The instructions are only useful before a run.
   el.idle.hidden = s !== 'idle';
+  renderSession();
 }
 
 async function acquireWakeLock() {
@@ -252,6 +483,8 @@ async function startRun() {
   sourceLabel = capture.source;
   acquireWakeLock();
   el.result.hidden = true;
+  currentRun = null;
+  updateAddButton();
   el.calibBar.style.width = '0%';
   el.calibMsg.textContent = 'Hold still…';
   el.calibNote.hidden = true;
@@ -328,6 +561,7 @@ function signed(v) {
 
 function showResult(calib, rec, source) {
   let res;
+  currentRun = null;
   try {
     res = processRecording(calib, rec, loopOpts());
   } catch (e) {
@@ -498,6 +732,7 @@ function showResult(calib, rec, source) {
     el.details.append(dt, dd);
   }
   viz?.update(res.path, null, markers);
+  setCurrentRun(res, source, survey);
   offerContribution(res, calib, rec, source, loopMode, loopMode ? numPoints : 1);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

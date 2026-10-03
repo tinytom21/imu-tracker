@@ -1,6 +1,6 @@
 {
-  "version": "0.16",
+  "version": "0.17",
   "date": "2026-10-03",
   "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
-  "notes": "Survey mode: measure up to 3 antennas in one loop."
+  "notes": "Sessions: repeat a measurement and get the mean with a suggested accuracy."
 }
