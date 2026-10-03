@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@600;700&family=Wix+Madefor+Text:wght@400;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=0.15">
+  <link rel="stylesheet" href="style.css?v=0.16">
   <script type="importmap">
   {
     "imports": {
@@ -30,13 +30,15 @@
         <button type="button" id="modeSingle" class="seg-btn" role="radio" aria-checked="true" data-mode="single">Single move</button>
         <button type="button" id="modeLoop" class="seg-btn" role="radio" aria-checked="false" data-mode="loop">Loop (there and back)</button>
       </div>
-      <ol class="steps" id="stepsLoop" hidden>
-        <li>Place the phone <b>flat</b> against a straight edge (table edge, box, ruler). <b>Remember exactly where it sits</b>: this is the start spot.</li>
-        <li>Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.</li>
-        <li>Move smoothly to the far point and hold <b>completely still</b> until the green <b>✓ Far point recorded</b> tick appears. Don't pause on the way there.</li>
-        <li>Bring it back to <b>exactly the same spot and orientation</b> (same edge), without pausing, and set it down <b>gently</b>.</li>
-        <li>Hold still until the green tick appears, then press <b>Stop</b>. The result is start to far point, with drift removed.</li>
-      </ol>
+      <div class="seg-row" id="pointsRow" hidden>
+        <span class="seg-label" id="pointsLabel">Points to visit</span>
+        <div class="seg" role="radiogroup" aria-labelledby="pointsLabel">
+          <button type="button" class="seg-btn" role="radio" aria-checked="true" data-points="1">1</button>
+          <button type="button" class="seg-btn" role="radio" aria-checked="false" data-points="2">2</button>
+          <button type="button" class="seg-btn" role="radio" aria-checked="false" data-points="3">3</button>
+        </div>
+      </div>
+      <ol class="steps" id="stepsLoop" hidden></ol>
       <ol class="steps" id="stepsSingle">
         <li>Place the phone <b>flat</b> and line it up against a straight edge (table edge, box, ruler), with the <b>top of the phone</b> pointing the way you want to call <b>+Y</b>.</li>
         <li>Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.</li>
@@ -70,6 +72,13 @@
       <div class="panel">
         <div class="rows-label" id="rowsLabel" hidden>Start → far point</div>
         <div class="rows" id="rows"></div>
+        <div id="survey" hidden>
+          <div class="rows-label">From start (INS cradle) to each point</div>
+          <table class="cmp-table survey-table" id="surveyTable"></table>
+          <div class="cmp-unit">mm (X right, Y forward, Z up)</div>
+          <ul class="baselines" id="baselines"></ul>
+          <p class="cmp-note">Check the point-to-point distances against a tape measure.</p>
+        </div>
         <div class="compare" id="compare"></div>
         <div class="total" id="total"></div>
         <div class="badge-line"><span id="badge" class="badge">good</span></div>
@@ -83,11 +92,12 @@
           <p class="contrib-hint">Sends the raw sensor recording and the details below to the Offset developers to help improve accuracy. No location, name or account is collected; an anonymous device ID links your runs.</p>
           <fieldset class="contrib-ref">
             <legend>Reference measurement (optional)</legend>
-            <div class="contrib-xyz">
+            <div class="contrib-xyz" id="refSingle">
               <label>X<input id="refX" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
               <label>Y<input id="refY" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
               <label>Z<input id="refZ" type="number" inputmode="decimal" step="any" placeholder="mm"></label>
             </div>
+            <div id="refMulti" class="contrib-multi" hidden></div>
             <label class="contrib-field">Method
               <select id="refMethod">
                 <option value="tape">Tape measure</option>

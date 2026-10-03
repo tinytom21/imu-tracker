@@ -11,7 +11,15 @@
 const STILL_ACC = 0.1;    // m/s^2 smoothed world linear acceleration still counted as stationary
 const STILL_GYRO = 0.05;  // rad/s smoothed, bias-corrected
 const SMOOTH_S = 0.15;    // window for the motion detector
-const MARGIN_S = 0.3;     // integrate slightly beyond detected motion edges
+// Integrate beyond detected motion edges (never more than 1/3 of a pause), and skip the start of
+// each hold when reading gravity. Single moves and 1-point loops: tuned on 33 real recordings.
+// Multi-point surveys: a gentle leg start/end can go undetected, contaminating the next hold's
+// gravity reading and losing real velocity, so they use a wider margin. Validated in simulation
+// only (2026-10-03) - confirm with real survey runs before trusting it further.
+const MARGIN_S = 0.3;
+const HOLD_SKIP = 0;          // skipping part of the hold made no difference on the real recordings
+const SURVEY_MARGIN_S = 0.6;
+const SURVEY_HOLD_SKIP = 0.2;
 const VAR_WIN_S = 0.3;    // window for the accel-spread stillness test
 const MERGE_GAP_S = 0.4;  // pauses shorter than this don't split a move
 const MIN_RUN_S = 0.35;   // shorter bursts (Stop tap, start bump) are not the move
@@ -19,6 +27,7 @@ const KNOCK_ACC = 6;      // m/s^2 spike near the end of the move = phone knocke
 const KNOCK_WIN_S = 0.6;
 const KNOCK_MAX_RATE = 150; // Hz: above this a knock is sampled properly and doesn't matter
 const STAGE_GAP_S = 0.8;
+const TAIL_MERGE_S = 0.6;     // a burst this soon after the move is its settling tail, not the Stop tap
 const LOOP_TILT_DEG = 2;     // put back tilted more than this → warn
 const LOOP_HEADING_DEG = 3;  // put back turned more than this → warn
 const LOOP_GAP_MM = 150;     // loop misses by more than this → warn (simulated drift alone: < 70 mm)  // a still pause at least this long splits the move into stages
@@ -281,20 +290,35 @@ export function processRecording(calibSamples, samples, opts = {}) {
     const g = groups[groups.length - 1];
     if (samples[r.a].t - samples[g.b].t < (opts.stageGap ?? STAGE_GAP_S)) g.b = r.b; else groups.push({ a: r.a, b: r.b });
   }
-  // Loop closure: out to the far point, hold, back to the start. The longest pause is the far
-  // point; other pauses are not checkpoints, so the run is exactly two legs.
+  // Loop closure / survey: out to one or more points (e.g. GNSS antennas), holding at each, then
+  // back to the start. The `points` longest pauses are the survey points, in time order; other
+  // pauses are not checkpoints, so the run is exactly points + 1 legs.
   let loopOk = false;
   if (opts.loop) {
-    if (groups.length >= 2) {
-      let k = 0;
-      for (let j = 1; j < groups.length - 1; j++) {
-        if (samples[groups[j + 1].a].t - samples[groups[j].b].t > samples[groups[k + 1].a].t - samples[groups[k].b].t) k = j;
+    const want = Math.max(1, Math.round(opts.points || 1));
+    const gaps = groups.slice(0, -1).map((g, j) => ({ j, len: samples[groups[j + 1].a].t - samples[g.b].t }));
+    const chosen = gaps.sort((x, y) => y.len - x.len).slice(0, want).map((g) => g.j).sort((x, y) => x - y);
+    if (chosen.length) {
+      if (chosen.length < want) {
+        warnings.push(`Survey: ${want} points were expected but only ${chosen.length} hold${chosen.length === 1 ? ' was' : 's were'} found — the points are numbered in the order they were visited.`);
       }
-      groups = [{ a: groups[0].a, b: groups[k].b }, { a: groups[k + 1].a, b: groups[groups.length - 1].b }];
+      const merged = [];
+      let start = 0;
+      for (const j of [...chosen, groups.length - 1]) {
+        merged.push({ a: groups[start].a, b: groups[j].b });
+        start = j + 1;
+      }
+      groups = merged;
       loopOk = true;
     } else {
       warnings.push('Loop closure: no hold at the far point was found, so the loop could not be closed.');
     }
+  }
+  // A brief burst right after the move is its settling tail, not the Stop tap (which only comes
+  // after a hold): fold it into the move so it can't cut the end hold short.
+  for (const r of runs) {
+    const last = groups[groups.length - 1];
+    if (r.a > last.b && samples[r.a].t - samples[last.b].t < TAIL_MERGE_S) last.b = r.b;
   }
   const iLastRaw = groups[groups.length - 1].b;
   // A slow start barely changes the raw accel; world-frame acceleration sees it earlier.
@@ -321,12 +345,17 @@ export function processRecording(calibSamples, samples, opts = {}) {
   }
 
   // Expand each stage by a margin, never eating more than a third of a neighbouring pause.
+  // Defaults differ for multi-point surveys (see MARGIN_S); opts can override for experiments.
+  const survey = loopOk && groups.length > 2;
+  const margin = opts.margin ?? (survey ? SURVEY_MARGIN_S : MARGIN_S);
+  const holdSkip = opts.holdSkip ?? (survey ? SURVEY_HOLD_SKIP : HOLD_SKIP);
+  const share = opts.share ?? (survey ? 'drift' : 'time2'); // drift: by each leg's measured drift; time2: by duration squared
   const stages = groups.map((g, k) => {
-    const before = k === 0 ? MARGIN_S * 3 : samples[g.a].t - samples[groups[k - 1].b].t;
-    const after = k === groups.length - 1 ? MARGIN_S * 3 : samples[groups[k + 1].a].t - samples[g.b].t;
+    const before = k === 0 ? margin * 3 : samples[g.a].t - samples[groups[k - 1].b].t;
+    const after = k === groups.length - 1 ? margin * 3 : samples[groups[k + 1].a].t - samples[g.b].t;
     let a = g.a, b = g.b;
-    const tS = Math.max(t0, samples[a].t - Math.min(MARGIN_S, before / 3));
-    const tE = Math.min(tEnd, samples[b].t + Math.min(MARGIN_S, after / 3));
+    const tS = Math.max(t0, samples[a].t - Math.min(margin, before / 3));
+    const tE = Math.min(tEnd, samples[b].t + Math.min(margin, after / 3));
     while (a > 0 && samples[a - 1].t >= tS) a--;
     while (b < n - 1 && samples[b + 1].t <= tE) b++;
     return { a, b };
@@ -334,7 +363,7 @@ export function processRecording(calibSamples, samples, opts = {}) {
   stages.forEach((s, k) => { s.holdEnd = k < stages.length - 1 ? stages[k + 1].a - 1 : n - 1; });
   const iFirst = stages[0].a;
   const iLast = stages[stages.length - 1].b;
-  const endHold = tEnd - samples[iLast].t;
+  const endHold = tEnd - samples[groups[groups.length - 1].b].t; // from the detected end of motion, not the margin
   if (endHold < 0.5) warnings.push('Phone was not held still before Stop — end-of-move correction is weak.');
 
   // Cumulative rotation, used to phase in orientation-caused corrections within each stage.
@@ -357,13 +386,16 @@ export function processRecording(calibSamples, samples, opts = {}) {
     //    with the same size as gravity. Tilt mismatch (gyro scale error) and magnitude mismatch
     //    (accel scale error) come from the phone turning, so they are phased in by rotation.
     let tilt = 0, tiltAxis = [0, 0, 1], gHold = gCur;
-    if (holdEnd - b >= 5) {
+    // Use only the settled latter part of the hold: a smooth move's tail is too gentle to be seen
+    // as motion, and averaging it in skews gravity, giving a false tilt and phantom drift.
+    const hs = b + 1 + Math.floor(holdSkip * (holdEnd - b));
+    if (holdEnd - hs >= 5) {
       const gSum = [0, 0, 0], aSum = [0, 0, 0];
-      for (let i = b + 1; i <= holdEnd; i++) {
+      for (let i = hs; i <= holdEnd; i++) {
         const w = qRotate(qMul(qCorr, q[i]), acc(samples[i]));
         for (let k = 0; k < 3; k++) { gSum[k] += w[k]; aSum[k] += acc(samples[i])[k]; }
       }
-      gHold = norm(aSum) / (holdEnd - b);
+      gHold = norm(aSum) / (holdEnd - hs + 1);
       const gW = unit(gSum);
       tiltAxis = cross(gW, [0, 0, 1]);
       tilt = Math.atan2(norm(tiltAxis), gW[2]);
@@ -413,29 +445,47 @@ export function processRecording(calibSamples, samples, opts = {}) {
   // roughly with time squared) and report the far point.
   let loop = null;
   if (loopOk) {
-    const [l1, l2] = stages;
     const gap = path[n - 1].p.slice();
-    const share = l1.duration ** 2 / (l1.duration ** 2 + l2.duration ** 2);
+    // Each leg's share of the gap: by its own measured drift (the velocity its hold had to remove)
+    // times its duration - a direct measure of how wrong that leg was - or by duration squared.
+    const weight = share === 'time2'
+      ? stages.map((s) => s.duration ** 2)
+      : stages.map((s) => (norm(s.vEnd) + 1e-3) * s.duration);
+    const shares = weight.map((x) => x / weight.reduce((a, b) => a + b, 0));
+    const before = shares.map((_, k) => shares.slice(0, k).reduce((a, b) => a + b, 0)); // share used up by earlier legs
+    // Fraction of the gap removed by sample i: the earlier legs' shares, plus this leg's share
+    // phased in linearly over the leg.
     const corr = (i) => {
-      if (i <= l1.a) return 0;
-      if (i <= l1.b) return share * (samples[i].t - samples[l1.a].t) / l1.duration;
-      if (i <= l2.a) return share;
-      if (i <= l2.b) return share + (1 - share) * (samples[i].t - samples[l2.a].t) / l2.duration;
-      return 1;
+      for (let k = stages.length - 1; k >= 0; k--) {
+        const s = stages.at(k);
+        if (i > s.b) return before.at(k) + shares.at(k);
+        if (i > s.a) return before.at(k) + shares.at(k) * (samples[i].t - samples[s.a].t) / s.duration;
+      }
+      return 0;
     };
-    const raw = path[l1.b].p.slice();
+    const pointIdx = stages.slice(0, -1).map((s) => s.b);       // a survey point is held after each outbound leg
+    const rawPoints = pointIdx.map((i) => path[i].p.slice());
     for (let i = 0; i < n; i++) { const f = corr(i); path[i].p = path[i].p.map((x, k) => x - gap[k] * f); }
-    p = path[l1.b].p.slice();
+    const points = pointIdx.map((i) => path[i].p.slice());
+    p = points[0].slice();
+    const raw = rawPoints[0];
+    const share1 = shares[0];
+    // Distances between survey points, e.g. the dual-antenna baseline, to check against a tape.
+    const baselines = [];
+    for (let a = 0; a < points.length; a++)
+      for (let b = a + 1; b < points.length; b++)
+        baselines.push({ from: a + 1, to: b + 1, mm: norm(sub(points[b], points[a])) * 1000 });
 
     // Was the phone put back the same way? Tilt from gravity (independent of the gyro);
     // heading from the gyro-tracked attitude, so it also includes any gyro drift.
     const aStart = meanStd(calibSamples, acc).mean;
-    const aEnd = meanStd(samples.slice(l2.b + 1), acc).mean;
+    const aEnd = meanStd(samples.slice(stages.at(-1).b + 1), acc).mean;
     const tiltOff = Math.acos(Math.min(1, dot(unit(aStart), unit(aEnd)))) * 180 / Math.PI;
     const fwdDev = cal.forwardAxis === 'top' ? [0, 1, 0] : [0, 0, -1];
     const fEnd = qRotate(qMul(qCorr, q[n - 1]), fwdDev);
     const headingOff = Math.atan2(fEnd[0], fEnd[1]) * 180 / Math.PI; // + = turned right
-    loop = { gap, gapMm: norm(gap) * 1000, share, raw, legs: [l1.duration, l2.duration], tiltOffDeg: tiltOff, headingOffDeg: headingOff };
+    loop = { gap, gapMm: norm(gap) * 1000, share: share1, shareRule: share, shares, raw, rawPoints, points, baselines,
+             legs: stages.map((s) => s.duration), tiltOffDeg: tiltOff, headingOffDeg: headingOff };
     if (tiltOff > LOOP_TILT_DEG) warnings.push(`Loop closure: the phone was put back tilted ${tiltOff.toFixed(1)}° from how it started — return it to exactly the same position.`);
     if (Math.abs(headingOff) > LOOP_HEADING_DEG) warnings.push(`Loop closure: the phone came back turned ${Math.abs(headingOff).toFixed(1)}° from how it started — line it up the same way.`);
     if (loop.gapMm > LOOP_GAP_MM) warnings.push(`Loop closure: the loop missed by ${Math.round(loop.gapMm)} mm — either it wasn't returned to the exact start spot, or drift was high.`);

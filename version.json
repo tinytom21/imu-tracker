@@ -1,6 +1,6 @@
 {
-  "version": "0.15",
-  "date": "2026-10-02",
+  "version": "0.16",
+  "date": "2026-10-03",
   "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
-  "notes": "Renamed to Offset."
+  "notes": "Survey mode: measure up to 3 antennas in one loop."
 }

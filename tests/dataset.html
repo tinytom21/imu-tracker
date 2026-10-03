@@ -43,7 +43,8 @@ const rows = [];
 for (const r of index) {
   const { cal, rec } = parseCsv(await (await fetch(`data/runs/${r.id}.csv?v=${v}`)).text());
   let res, err = null;
-  try { res = processRecording(cal, rec, { loop: r.mode === 'loop' }); } catch (e) { err = e.message; }
+  const points = r.meta?.extra?.points || 1; // survey runs: score point 1 against the reference columns
+  try { res = processRecording(cal, rec, { loop: r.mode === 'loop', points }); } catch (e) { err = e.message; }
   const d = res ? res.delta.map((x) => x * 1000) : null;
   const ref = r.ref_x != null ? [r.ref_x, r.ref_y, r.ref_z] : null;
   const e = d && ref ? d.map((x, k) => x - ref[k]) : null;

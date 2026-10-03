@@ -160,6 +160,35 @@ try {
     add({ name: '15d Loop returned off-spot and turned: warns', expected: 'turned + missed warnings', got: `gap ${Math.round(r.loop.gapMm)} mm, heading ${r.loop.headingOffDeg.toFixed(1)} deg`, errText: '-', err: [0, 0, 0], tol: 'warnings present', extra: w, status: ok ? 'PASS' : 'FAIL' });
   }
   {
+    // Survey: INS -> antenna 1 -> antenna 2 -> INS. Both points and the baseline between them are scored.
+    const A1 = [0.55, 1.05, 0.95], A2 = [-0.55, 1.05, 0.95];
+    const legs = (seed) => [
+      { D: A1, moveSec: 4, rotDeg: 40, pause: 1.5 },
+      { D: A2.map((x, k) => x - A1[k]), moveSec: 3, rotDeg: -20, pause: 1.5 },
+      { D: A2.map((x) => -x), moveSec: 5, rotDeg: -20 },
+    ];
+    let worstPt = [0, 0, 0], worstBase = 0, ok = true, n = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+      const g = generate({ ...LONG, segments: legs(seed), seed });
+      const r = processRecording(g.calibSamples, g.samples, { loop: true, points: 2 });
+      if (!r.loop || r.loop.points.length !== 2) { ok = false; continue; }
+      n++;
+      [A1, A2].forEach((T, j) => r.loop.points[j].forEach((x, k) => { worstPt[k] = Math.max(worstPt[k], Math.abs(x - T[k]) * 1000); }));
+      worstBase = Math.max(worstBase, Math.abs(r.loop.baselines[0].mm - 1100));
+    }
+    // Simulation achieves ~35 mm worst axis with the survey defaults (vs ~300 mm with the
+    // single/loop defaults), so hold it well inside the +/-150 mm target. Baseline held tight.
+    ok = ok && n === 10 && Math.max(...worstPt) < 80 && worstBase < 60;
+    add({ name: '16a Survey, 2 antennas, 3 legs (10 seeds)', expected: 'A1 550/1050/950, A2 -550/1050/950, baseline 1100', got: `${n}/10 runs found 2 points`, errText: `worst point axis ${worstPt.map(f1).join(', ')} | worst baseline ${f1(worstBase)}`, err: worstPt, tol: 'points < 80 mm, baseline < 60 mm', extra: '', status: ok ? 'PASS' : 'FAIL' });
+  }
+  {
+    // Survey expecting 2 points but only 1 hold made: uses what it found and warns.
+    const g = generate({ ...LONG, seed: 4, segments: [{ D: [0.5, 1.0, 0.9], moveSec: 4, rotDeg: 30, pause: 1.5 }, { D: [-0.5, -1.0, -0.9], moveSec: 4, rotDeg: -30 }] });
+    const r = processRecording(g.calibSamples, g.samples, { loop: true, points: 2 });
+    const ok = r.loop && r.loop.points.length === 1 && r.quality.warnings.some((w) => /2 points were expected/.test(w));
+    add({ name: '16b Survey expecting 2 points, only 1 hold: warns', expected: '1 point + warning', got: `${r.loop ? r.loop.points.length : 0} point(s)`, errText: '-', err: [0, 0, 0], tol: 'warning present', extra: r.quality.warnings.join(' | '), status: ok ? 'PASS' : 'FAIL' });
+  }
+  {
     // Loop mode but no hold at the far point: falls back with a warning.
     const g = generate({ ...LOOP, segments: [{ D: FAR, moveSec: 5, rotDeg: 30, pause: 0 }, { D: back(FAR), moveSec: 5, rotDeg: -30 }] });
     const r = processRecording(g.calibSamples, g.samples, { loop: true });

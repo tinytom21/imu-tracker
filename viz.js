@@ -19,7 +19,7 @@ function bounds(points) {
 // ---------------------------------------------------------------- 2D plots
 const FUSED_HEX = 0xe040fb, FUSED_CSS = '#e040fb';
 
-function drawPlot(canvas, points, points2, hAxis, vAxis, hName, vName) {
+function drawPlot(canvas, points, points2, hAxis, vAxis, hName, vName, markers) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth, H = canvas.clientHeight;
   if (!W || !H) return;
@@ -66,6 +66,17 @@ function drawPlot(canvas, points, points2, hAxis, vAxis, hName, vName) {
   if (pts2 && pts2.length) {
     const e2 = pts2[pts2.length - 1];
     dot(e2, '#ffffff', 5); dot(e2, FUSED_CSS, 3.5);
+  }
+
+  // numbered survey-point markers (accent-coloured discs with a white digit)
+  if (markers && markers.length) {
+    ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const m of markers) {
+      const mx = X(m.p[hAxis]), my = Y(m.p[vAxis]);
+      ctx.fillStyle = css('--accent'); ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = '#ffffff'; ctx.fillText(m.label, mx, my + 0.5);
+    }
   }
 
   // axis labels
@@ -131,7 +142,7 @@ async function create3D(container) {
     camera.updateProjectionMatrix();
   }
 
-  function update(points, points2) {
+  function update(points, points2, markers) {
     if (content) {
       scene.remove(content);
       content.traverse((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
@@ -184,6 +195,15 @@ async function create3D(container) {
       const m = new THREE.Mesh(new THREE.SphereGeometry(r * 0.75, 16, 12), new THREE.MeshBasicMaterial({ color: FUSED_HEX }));
       m.position.copy(vs2[vs2.length - 1]); content.add(m);
     }
+    // numbered survey-point markers: accent ball with a label sprite floating above it
+    for (const m of markers || []) {
+      const p = new THREE.Vector3(...m.p);
+      ball(p, new THREE.Color(css('--accent')));
+      const label = makeLabel(THREE, m.label, css('--accent'));
+      label.position.copy(p).add(new THREE.Vector3(0, 0, size * 0.09));
+      label.scale.setScalar(size * 0.1);
+      content.add(label);
+    }
     const dashed = new THREE.Line(new THREE.BufferGeometry().setFromPoints([vs[0], vs[vs.length - 1]]),
       new THREE.LineDashedMaterial({ color: new THREE.Color(css('--muted')), dashSize: size * 0.03, gapSize: size * 0.02 }));
     dashed.computeLineDistances();
@@ -208,34 +228,36 @@ async function create3D(container) {
 // ---------------------------------------------------------------- public API
 /**
  * @param {{view3d:HTMLElement, plotTop:HTMLCanvasElement, plotSide:HTMLCanvasElement, legend?:HTMLElement}} els
- * @returns {Promise<{update:(path:Array, path2?:Array|null)=>void}>} path = processRecording().path
+ * @returns {Promise<{update:(path:Array, path2?:Array|null, markers?:Array<{label:string,p:number[]}>|null)=>void}>} path = processRecording().path
  */
 export async function createViz({ view3d, plotTop, plotSide, legend }) {
   let points = [[0, 0, 0]];
   let points2 = null;
+  let markers = null;
   let v3 = null;
 
   const draw2D = () => {
-    drawPlot(plotTop, points, points2, 0, 1, 'X', 'Y');
-    drawPlot(plotSide, points, points2, 1, 2, 'Y', 'Z');
+    drawPlot(plotTop, points, points2, 0, 1, 'X', 'Y', markers);
+    drawPlot(plotSide, points, points2, 1, 2, 'Y', 'Z', markers);
   };
   new ResizeObserver(draw2D).observe(plotTop);
   new ResizeObserver(draw2D).observe(plotSide);
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw2D);
 
-  const ready = create3D(view3d).then((v) => { v3 = v; v3.update(points, points2); }).catch((e) => {
+  const ready = create3D(view3d).then((v) => { v3 = v; v3.update(points, points2, markers); }).catch((e) => {
     console.error(e);
     view3d.textContent = '3D view unavailable (could not load three.js): ' + e.message;
   });
 
   return {
     ready,
-    update(path, path2) {
+    update(path, path2, mk) {
       points = path.length ? path.map((s) => s.p) : [[0, 0, 0]];
       points2 = path2 && path2.length ? path2.map((s) => s.p) : null;
+      markers = mk && mk.length ? mk : null;
       if (legend) legend.hidden = !points2;
       draw2D();
-      if (v3) v3.update(points, points2);
+      if (v3) v3.update(points, points2, markers);
     },
   };
 }

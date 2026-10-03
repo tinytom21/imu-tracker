@@ -130,10 +130,12 @@ export async function initContribute() {
   await loadConfig();
   const el = {
     panel: $('contrib'), off: $('contribOff'), form: $('contribForm'), x: $('refX'), y: $('refY'), z: $('refZ'),
+    single: $('refSingle'), multi: $('refMulti'),
     method: $('refMethod'), route: $('contribRoute'), notes: $('contribNotes'), flagged: $('contribFlagged'),
     agree: $('contribAgree'), submit: $('contribSubmit'), status: $('contribStatus'), queue: $('contribQueue'),
   };
-  let run = null;       // { build(): Promise<{meta, csv}> } for the current result, or null
+  let multiRows = [];   // per-point [X, Y, Z] inputs for survey runs
+  let run = null;       //{ build(): Promise<{meta, csv}> } for the current result, or null
   let submitted = false;
 
   const queueLine = async () => {
@@ -161,6 +163,30 @@ export async function initContribute() {
     run = info;
     submitted = false;
     for (const i of [el.x, el.y, el.z, el.route, el.notes]) i.value = '';
+    // Survey runs get one X/Y/Z reference row per point.
+    const n = Math.max(1, Math.min(3, info.points | 0 || 1));
+    multiRows = [];
+    el.multi.textContent = '';
+    el.single.hidden = n > 1;
+    el.multi.hidden = n <= 1;
+    for (let k = 1; k <= n && n > 1; k++) {
+      const name = document.createElement('div');
+      name.className = 'ref-name';
+      name.textContent = `Point ${k}`;
+      const grid = document.createElement('div');
+      grid.className = 'contrib-xyz';
+      const inputs = ['X', 'Y', 'Z'].map((axis) => {
+        const label = document.createElement('label');
+        label.append(axis);
+        const input = document.createElement('input');
+        input.type = 'number'; input.inputMode = 'decimal'; input.step = 'any'; input.placeholder = 'mm';
+        label.appendChild(input);
+        grid.appendChild(label);
+        return input;
+      });
+      el.multi.append(name, grid);
+      multiRows.push(inputs);
+    }
     el.method.value = 'tape';
     el.flagged.checked = false;
     el.agree.checked = false;
@@ -179,12 +205,22 @@ export async function initContribute() {
     el.status.textContent = 'Sending…';
     try {
       const { meta, csv } = await run.build();
-      const refs = [el.x, el.y, el.z].map((i) => i.value.trim());
-      if (refs.some((v) => v !== '')) {
-        if (refs.some((v) => v === '')) throw new Error('Enter all of X, Y and Z for the reference (0 if none).');
+      // Each row: all of X/Y/Z or none. Returns {x,y,z} (mm) or null for a blank row.
+      const readRow = (inputs, what) => {
+        const refs = inputs.map((i) => i.value.trim());
+        if (refs.every((v) => v === '')) return null;
+        if (refs.some((v) => v === '')) throw new Error(`Enter all of X, Y and Z for ${what} (0 if none).`);
         const nums = refs.map(Number);
         if (nums.some((v) => !Number.isFinite(v))) throw new Error('Reference values must be numbers (mm).');
-        meta.reference = { x: nums[0], y: nums[1], z: nums[2], method: el.method.value };
+        return { x: nums[0], y: nums[1], z: nums[2] };
+      };
+      if (multiRows.length) {
+        const rows = multiRows.map((inputs, k) => readRow(inputs, `point ${k + 1}`));
+        meta.extra = { ...(meta.extra || {}), references: rows };
+        if (rows[0]) meta.reference = { ...rows[0], method: el.method.value };
+      } else {
+        const r = readRow([el.x, el.y, el.z], 'the reference');
+        if (r) meta.reference = { ...r, method: el.method.value };
       }
       meta.route = el.route.value.trim().slice(0, 120);
       meta.notes = el.notes.value.trim().slice(0, 2000);

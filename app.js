@@ -65,7 +65,42 @@ const el = {
   dl: $('dl'), csv: $('csv'),
   modeSingle: $('modeSingle'), modeLoop: $('modeLoop'), stepsLoop: $('stepsLoop'), stepsSingle: $('stepsSingle'),
   modeBadge: $('modeBadge'), rowsLabel: $('rowsLabel'),
+  pointsRow: $('pointsRow'), survey: $('survey'), surveyTable: $('surveyTable'), baselines: $('baselines'),
 };
+
+// Loop mode can visit 1-3 points (e.g. antenna 1, antenna 2) before returning to the start.
+let numPoints = 1;
+try { const n = +localStorage.getItem('imuPoints'); if (n >= 1 && n <= 3) numPoints = n; } catch { /* ignore */ }
+const loopOpts = () => (loopMode ? { loop: true, points: numPoints } : undefined);
+const ptName = (k) => (numPoints === 2 ? `antenna ${k}` : `point ${k}`);
+
+function renderLoopSteps() {
+  const N = numPoints;
+  const li = (html) => `<li>${html}</li>`;
+  const out = [
+    li('Place the phone <b>flat</b> against a straight edge (table edge, box, ruler). <b>Remember exactly where it sits</b>: this is the start spot.'),
+    li('Press <b>Start</b> and keep it <b>completely still</b> until the button turns red.'),
+  ];
+  if (N === 1) {
+    out.push(li('Move smoothly to the far point and hold <b>completely still</b> until the green <b>✓ Far point recorded</b> tick appears. Don\'t pause on the way there.'));
+  } else {
+    for (let k = 1; k <= N; k++) {
+      out.push(li(`Move smoothly to <b>${ptName(k)}</b> and hold <b>completely still</b> until the green tick appears.${k === 1 ? ' Don\'t pause on the way there.' : ''}`));
+    }
+  }
+  out.push(li('Bring it back to <b>exactly the same spot and orientation</b> (same edge), without pausing, and set it down <b>gently</b>.'));
+  out.push(li(N === 1
+    ? 'Hold still until the green tick appears, then press <b>Stop</b>. The result is start to far point, with drift removed.'
+    : 'Hold still until the green tick appears, then press <b>Stop</b>. <b>Don\'t pause anywhere else.</b> The result is start to each point, with drift removed.'));
+  el.stepsLoop.innerHTML = out.join('');
+}
+function setPoints(n, save = true) {
+  numPoints = n;
+  for (const b of el.pointsRow.querySelectorAll('[data-points]')) b.setAttribute('aria-checked', String(+b.dataset.points === n));
+  renderLoopSteps();
+  if (save) { try { localStorage.setItem('imuPoints', String(n)); } catch { /* ignore */ } }
+}
+for (const b of el.pointsRow.querySelectorAll('[data-points]')) b.addEventListener('click', () => setPoints(+b.dataset.points));
 
 // Loop mode: go A -> B, hold, return to exactly A, hold. Persisted across reloads.
 let loopMode = false;
@@ -75,12 +110,14 @@ function setMode(loop, save = true) {
   el.modeSingle.setAttribute('aria-checked', String(!loop));
   el.modeLoop.setAttribute('aria-checked', String(loop));
   el.stepsLoop.hidden = !loop;
+  el.pointsRow.hidden = !loop;
   el.stepsSingle.hidden = loop;
   if (save) { try { localStorage.setItem('imuMode', loop ? 'loop' : 'single'); } catch { /* ignore */ } }
 }
 el.modeSingle.addEventListener('click', () => setMode(false));
 el.modeLoop.addEventListener('click', () => setMode(true));
 setMode(loopMode, false);
+setPoints(numPoints, false);
 
 let state = 'idle';           // idle | starting | calibrating | recording | result
 let buf = [];                 // rolling calibration buffer
@@ -155,13 +192,18 @@ function beep() {
   } catch { /* optional */ }
 }
 
+function loopMessage(k) {
+  const N = numPoints;
+  if (k > N) return '✓ Back at start? Press Stop';
+  if (N === 1) return '✓ Far point recorded — now bring it back to the exact start spot';
+  return k < N ? `✓ Point ${k} recorded — go to point ${k + 1}` : `✓ Point ${k} recorded — now bring it back to the exact start spot`;
+}
+
 function renderCheckpoint(s) {
   const flashing = performance.now() < cpFlashUntil;
   if (s.registered) {
     cpFlashUntil = performance.now() + CP_FLASH_MS;
-    el.cpMsg.textContent = loopMode
-      ? (s.count === 1 ? '✓ Far point recorded — now bring it back to the exact start spot' : '✓ Back at start? Press Stop')
-      : `✓ Checkpoint ${s.count} — carry on (or press Stop)`;
+    el.cpMsg.textContent = loopMode ? loopMessage(s.count) : `✓ Checkpoint ${s.count} — carry on (or press Stop)`;
     el.cpMsg.classList.add('flash');
     beep();
   } else if (!flashing) {
@@ -250,6 +292,7 @@ function calibTick() {
     try { cpTracker = new CheckpointTracker(calibSamples); } catch { cpTracker = null; }
     cpFlashUntil = 0;
     el.modeBadge.hidden = !loopMode;
+    el.modeBadge.textContent = numPoints > 1 ? `Loop · ${numPoints} points` : 'Loop mode';
     renderCheckpoint({ still: false, moved: false, progress: 0, count: 0, registered: false });
     setState('recording');
     tick = setInterval(recTick, 150);
@@ -286,7 +329,7 @@ function signed(v) {
 function showResult(calib, rec, source) {
   let res;
   try {
-    res = processRecording(calib, rec, loopMode ? { loop: true } : undefined);
+    res = processRecording(calib, rec, loopOpts());
   } catch (e) {
     showError('Processing failed: ' + e.message);
     return;
@@ -295,7 +338,7 @@ function showResult(calib, rec, source) {
   let fused = null, fusedErr = null;
   if (hasQ) {
     try {
-      fused = processRecording(calib, rec, { orientation: 'fused', ...(loopMode ? { loop: true } : {}) });
+      fused = processRecording(calib, rec, { orientation: 'fused', ...(loopMode ? { loop: true, points: numPoints } : {}) });
     } catch (e) {
       fusedErr = e.message || String(e);
     }
@@ -305,15 +348,39 @@ function showResult(calib, rec, source) {
   el.result.hidden = false;
 
   const [x, y, z] = res.delta;
+  const survey = !!(loopMode && res.loop && res.loop.points && res.loop.points.length >= 2);
+  const markers = survey ? res.loop.points.map((p, i) => ({ label: String(i + 1), p })) : null;
   el.rows.innerHTML = '';
-  el.rowsLabel.hidden = !loopMode;
-  for (const [v, axis, label] of [[z, 'Z', 'up'], [y, 'Y', 'forward'], [x, 'X', 'right']]) {
-    const d = document.createElement('div');
-    d.className = 'row';
-    d.innerHTML = `${signed(v)} mm ${axis} <small>(${label})</small>`;
-    el.rows.appendChild(d);
+  el.rows.hidden = survey;
+  el.survey.hidden = !survey;
+  el.rowsLabel.hidden = !loopMode || survey;
+  if (survey) {
+    const cell = (tag, text) => { const c = document.createElement(tag); c.textContent = text; return c; };
+    el.surveyTable.innerHTML = '';
+    const head = el.surveyTable.createTHead().insertRow();
+    for (const h of ['', 'X', 'Y', 'Z']) head.appendChild(cell('th', h));
+    const body = el.surveyTable.createTBody();
+    res.loop.points.forEach((p, i) => {
+      const row = body.insertRow();
+      row.appendChild(cell('th', `Point ${i + 1}`));
+      for (const v of p) row.appendChild(cell('td', signed(v)));
+    });
+    el.baselines.innerHTML = '';
+    for (const b of res.loop.baselines || []) {
+      const li = document.createElement('li');
+      li.textContent = `Point ${b.from} ↔ Point ${b.to}: ${Math.round(b.mm)} mm`;
+      el.baselines.appendChild(li);
+    }
+    el.total.textContent = '';
+  } else {
+    for (const [v, axis, label] of [[z, 'Z', 'up'], [y, 'Y', 'forward'], [x, 'X', 'right']]) {
+      const d = document.createElement('div');
+      d.className = 'row';
+      d.innerHTML = `${signed(v)} mm ${axis} <small>(${label})</small>`;
+      el.rows.appendChild(d);
+    }
+    el.total.innerHTML = `Straight-line distance: <b>${mm(Math.hypot(x, y, z))} mm</b>`;
   }
-  el.total.innerHTML = `Straight-line distance: <b>${mm(Math.hypot(x, y, z))} mm</b>`;
 
   // comparison of methods
   // (diagnostics only: lives in a collapsed <details> at the bottom of the details area)
@@ -326,7 +393,7 @@ function showResult(calib, rec, source) {
   diag.appendChild(diagSum);
   el.compare.appendChild(diag);
   diag.addEventListener('toggle', () => {
-    viz?.update(res.path, diag.open && fused ? fused.path : null);
+    viz?.update(res.path, diag.open && fused ? fused.path : null, markers);
   });
   const fusionWarnings = [];
   if (fused) {
@@ -409,6 +476,9 @@ function showResult(calib, rec, source) {
       ['Return tilt', `${L.tiltOffDeg.toFixed(1)}°`],
       ['Return heading', `${Math.abs(h).toFixed(1)}° ${h >= 0 ? 'right' : 'left'}`],
       ['Uncorrected', `${mm(L.raw[0])} / ${mm(L.raw[1])} / ${mm(L.raw[2])} mm (X / Y / Z)`]);
+    if (survey && L.shareRule) {
+      details.splice(1, 0, ['Gap shared by', L.shareRule === 'drift' ? 'measured drift' : L.shareRule === 'time2' ? 'leg time' : String(L.shareRule)]);
+    }
   }
   if (window.AndroidIMU) {
     try {
@@ -427,13 +497,13 @@ function showResult(calib, rec, source) {
     const dd = document.createElement('dd'); dd.textContent = v;
     el.details.append(dt, dd);
   }
-  viz?.update(res.path, null);
-  offerContribution(res, calib, rec, source, loopMode);
+  viz?.update(res.path, null, markers);
+  offerContribution(res, calib, rec, source, loopMode, loopMode ? numPoints : 1);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ---------------------------------------------------------------- contribute
-async function offerContribution(res, calib, rec, source, loop) {
+async function offerContribution(res, calib, rec, source, loop, points = 1) {
   const c = await contributeReady;
   if (!c) return;
   const fromFile = String(source).startsWith('csv');
@@ -441,6 +511,7 @@ async function offerContribution(res, calib, rec, source, loop) {
   const num = (v) => (Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null);
   c.show({
     allowed: true,
+    points,
     async build() {
       const L = res.loop;
       const drift = res.endVelocityCorrected ? Math.hypot(...res.endVelocityCorrected) : 0;
@@ -455,9 +526,13 @@ async function offerContribution(res, calib, rec, source, loop) {
         warnings: res.quality.warnings.slice(0, 20),
         reference: null,
         extra: {
+          points,
           loop: L ? {
             gapMm: num(L.gapMm), tiltOffDeg: num(L.tiltOffDeg), headingOffDeg: num(L.headingOffDeg),
             rawMm: L.raw.map(mm), legs: L.legs.map(num),
+            points: (L.points || []).map((p) => p.map(mm)),
+            baselines: (L.baselines || []).map((b) => ({ from: b.from, to: b.to, mm: num(b.mm) })),
+            shareRule: L.shareRule ?? null,
           } : null,
           stages: (res.stages || []).map((s) => ({ start: num(s.start), end: num(s.end), drift: num(s.drift), tiltDeg: num(s.tiltDeg) })),
           endHold: num(res.quality.endHold),
