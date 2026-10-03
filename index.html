@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@600;700&family=Wix+Madefor+Text:wght@400;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=0.17">
+  <link rel="stylesheet" href="style.css?v=0.18">
   <script type="importmap">
   {
     "imports": {
@@ -79,6 +79,12 @@
           <div class="cmp-unit">mm (X right, Y forward, Z up)</div>
           <ul class="baselines" id="baselines"></ul>
           <p class="cmp-note">Check the point-to-point distances against a tape measure.</p>
+        </div>
+        <div id="single" hidden>
+          <div class="rows-label">Loop closure vs single move</div>
+          <table class="cmp-table" id="singleTable"></table>
+          <div class="cmp-unit">mm (X right, Y forward, Z up)</div>
+          <p class="cmp-note">Same recording processed both ways — record in Loop mode to compare.</p>
         </div>
         <div class="compare" id="compare"></div>
         <div class="total" id="total"></div>

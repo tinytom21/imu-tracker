@@ -12,7 +12,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4p
 <script type="module">
 // Cache-busted so edits to the modules are always picked up on reload.
 const v = Date.now();
-const { processRecording } = await import(`../processing.js?v=${v}`);
+const { processRecording, singleFromLoop } = await import(`../processing.js?v=${v}`);
 const { generate, G } = await import(`./synth.js?v=${v}`);
 
 const REAL = { accNoise: 0.02, accBias: [0.02, -0.015, 0.03], gyroNoise: 0.002, gyroBias: [0.003, -0.002, 0.004] };
@@ -208,7 +208,22 @@ try {
     const r = processRecording(g.calibSamples, g.samples, { loop: true });
     const ok = r.loop === null && r.quality.warnings.some((x) => /no hold at the far point/.test(x));
     add({ name: '15e Loop mode without a far-point hold: warns', expected: 'loop null + warning', got: `loop ${r.loop === null ? 'null' : 'set'}`, errText: '-', err: [0, 0, 0], tol: 'warning present', extra: r.quality.warnings.join(' | '), status: ok ? 'PASS' : 'FAIL' });
+  }  {
+    // A loop run cut at the far point and processed as a single move: should match the uncorrected
+    // outbound leg and still land on the far point (it just lacks the loop's drift correction).
+    let worst = [0, 0, 0], worstRaw = 0, n = 0;
+    for (let seed = 1; seed <= 5; seed++) {
+      const g = generate({ ...LOOP, seed, segments: [{ D: FAR, moveSec: 4, rotDeg: 30, pause: 1.5 }, { D: back(FAR), moveSec: 4, rotDeg: -30 }] });
+      const L = processRecording(g.calibSamples, g.samples, { loop: true });
+      const S = singleFromLoop(g.calibSamples, g.samples, L);
+      if (!S) continue;
+      n++;
+      S.delta.forEach((x, k) => { worst[k] = Math.max(worst[k], Math.abs(x - FAR[k]) * 1000); worstRaw = Math.max(worstRaw, Math.abs(x - L.loop.raw[k]) * 1000); });
+    }
+    const ok = n === 5 && Math.max(...worst) < 150 && worstRaw < 30;
+    add({ name: '15f Loop run re-processed as a single move (5 seeds)', expected: `far point ${FAR.map((x) => x * 1000).join('/')}`, got: `${n}/5 processed; worst gap to uncorrected leg ${f1(worstRaw)} mm`, errText: worst.map(f1).join(', '), err: worst, tol: '< 150 mm; within 30 mm of raw leg', extra: '', status: ok ? 'PASS' : 'FAIL' });
   }
+
   {
     const errsAll = []; let still = true;
     for (let s = 1; s <= 5; s++) {

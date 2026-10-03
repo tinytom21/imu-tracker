@@ -18,7 +18,7 @@
 <script type="module">
 // Cache-busted so the current processing.js is always used.
 const v = Date.now();
-const { processRecording } = await import(`../processing.js?v=${v}`);
+const { processRecording, singleFromLoop } = await import(`../processing.js?v=${v}`);
 const LIMIT = 150;
 
 function parseCsv(text) {
@@ -47,19 +47,29 @@ for (const r of index) {
   try { res = processRecording(cal, rec, { loop: r.mode === 'loop', points }); } catch (e) { err = e.message; }
   const d = res ? res.delta.map((x) => x * 1000) : null;
   const ref = r.ref_x != null ? [r.ref_x, r.ref_y, r.ref_z] : null;
-  const e = d && ref ? d.map((x, k) => x - ref[k]) : null;
-  rows.push({ r, d, ref, e, err, pass: e ? e.every((x) => Math.abs(x) <= LIMIT) : null, level: res?.quality.level });
+  const score = (dd, method, level) => {
+    const e = dd && ref ? dd.map((x, k) => x - ref[k]) : null;
+    rows.push({ r, d: dd, ref, e, err, method, pass: e ? e.every((x) => Math.abs(x) <= LIMIT) : null, level });
+  };
+  score(d, r.mode === 'loop' ? 'loop closure' : 'single move', res?.quality.level);
+  // 1-point loops are also scored as a single move (cut at the far point), to compare the methods.
+  if (res?.loop && points === 1) {
+    let s = null;
+    try { s = singleFromLoop(cal, rec, res); } catch { /* scored once only */ }
+    if (s) score(s.delta.map((x) => x * 1000), 'loop run, as single move', s.quality.level);
+  }
 }
 
 const f0 = (x) => (x == null ? '' : Math.round(x));
 const scored = rows.filter((x) => x.e && !x.r.flagged_error);
-const groupBy = (key) => {
+const primary = scored.filter((x) => x.method !== 'loop run, as single move'); // each run once
+const groupBy = (key, from) => {
   const m = new Map();
-  for (const x of scored) { const k = key(x) || '(none)'; if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
+  for (const x of from) { const k = key(x) || '(none)'; if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
   return [...m.entries()];
 };
-const summary = (title, key) => {
-  const g = groupBy(key);
+const summary = (title, key, from = primary) => {
+  const g = groupBy(key, from);
   let h = `<h2>By ${title}</h2><table><tr><th>${title}</th><th>scored runs</th><th>within ±150 mm</th><th>within ±100 mm</th><th>mean |error| X / Y / Z (mm)</th><th>worst axis (mm)</th></tr>`;
   for (const [k, xs] of g) {
     const n = xs.length, p150 = xs.filter((x) => x.pass).length, p100 = xs.filter((x) => x.e.every((v) => Math.abs(v) <= 100)).length;
@@ -70,13 +80,13 @@ const summary = (title, key) => {
   return h + '</table>';
 };
 
-let html = `<p>${index.length} runs downloaded · ${rows.filter((x) => x.ref).length} with a reference · ${scored.length} scored (not flagged).</p>`;
-html += summary('mode', (x) => x.r.mode) + summary('sensor source', (x) => x.r.source) + summary('device', (x) => x.r.device)
+let html = `<p>${index.length} runs downloaded · ${rows.filter((x) => x.ref).length} results with a reference · ${scored.length} scored (not flagged). 1-point loop runs are scored twice: with loop closure, and cut at the far point as a single move.</p>`;
+html += summary('method', (x) => x.method, scored) + summary('mode', (x) => x.r.mode) + summary('sensor source', (x) => x.r.source) + summary('device', (x) => x.r.device)
   + summary('route', (x) => x.r.route) + summary('app version (at upload)', (x) => x.r.app_version);
-html += '<h2>All runs</h2><table><tr><th>uploaded</th><th>route</th><th>mode</th><th>source</th><th>device</th><th>result X / Y / Z</th><th>reference</th><th>error</th><th>quality</th><th></th></tr>';
+html += '<h2>All runs</h2><table><tr><th>uploaded</th><th>route</th><th>method</th><th>source</th><th>device</th><th>result X / Y / Z</th><th>reference</th><th>error</th><th>quality</th><th></th></tr>';
 for (const x of [...rows].reverse()) {
   const cls = x.pass === null ? 'muted' : x.pass ? 'pass' : 'fail';
-  html += `<tr class="${x.r.flagged_error ? 'muted' : ''}"><td>${x.r.created_at.slice(0, 16).replace('T', ' ')}</td><td>${x.r.route || ''}</td><td>${x.r.mode || ''}</td><td>${x.r.source || ''}</td><td>${x.r.device || ''}</td>`
+  html += `<tr class="${x.r.flagged_error ? 'muted' : ''}"><td>${x.r.created_at.slice(0, 16).replace('T', ' ')}</td><td>${x.r.route || ''}</td><td>${x.method}</td><td>${x.r.source || ''}</td><td>${x.r.device || ''}</td>`
     + `<td>${x.d ? x.d.map(f0).join(' / ') : x.err}</td><td>${x.ref ? x.ref.map(f0).join(' / ') + (x.r.ref_method ? ` (${x.r.ref_method})` : '') : ''}</td>`
     + `<td class="${cls}">${x.e ? x.e.map(f0).join(' / ') : ''}</td><td>${x.level || ''}</td><td>${x.r.flagged_error ? 'flagged' : ''}</td></tr>`;
 }

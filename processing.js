@@ -484,7 +484,10 @@ export function processRecording(calibSamples, samples, opts = {}) {
     const fwdDev = cal.forwardAxis === 'top' ? [0, 1, 0] : [0, 0, -1];
     const fEnd = qRotate(qMul(qCorr, q[n - 1]), fwdDev);
     const headingOff = Math.atan2(fEnd[0], fEnd[1]) * 180 / Math.PI; // + = turned right
-    loop = { gap, gapMm: norm(gap) * 1000, share: share1, shareRule: share, shares, raw, rawPoints, points, baselines,
+    // Each point's hold, from the detected end of the leg before to the detected start of the leg after
+    // (s, from the first recorded sample) - used to re-process a leg on its own (singleFromLoop).
+    const holds = groups.slice(0, -1).map((g, k) => ({ start: samples[g.b].t - t0, end: samples[groups[k + 1].a].t - t0 }));
+    loop = { gap, gapMm: norm(gap) * 1000, share: share1, shareRule: share, shares, raw, rawPoints, points, baselines, holds,
              legs: stages.map((s) => s.duration), tiltOffDeg: tiltOff, headingOffDeg: headingOff };
     if (tiltOff > LOOP_TILT_DEG) warnings.push(`Loop closure: the phone was put back tilted ${tiltOff.toFixed(1)}° from how it started — return it to exactly the same position.`);
     if (Math.abs(headingOff) > LOOP_HEADING_DEG) warnings.push(`Loop closure: the phone came back turned ${Math.abs(headingOff).toFixed(1)}° from how it started — line it up the same way.`);
@@ -503,6 +506,25 @@ export function processRecording(calibSamples, samples, opts = {}) {
            stages: stages.map((s) => ({ start: samples[s.a].t - t0, end: samples[s.b].t - t0, drift: norm(s.vEnd), tiltDeg: s.tilt * 180 / Math.PI })),
            endVelocityCorrected: worst.vEnd, tiltCorrectionDeg: tilt * 180 / Math.PI,
            sampleRate, knock, orientation: opts.orientation || 'gyro', fusedConvention, loop };
+}
+
+// How much of the hold to keep when a loop is cut at its far point and processed as a single move:
+// stop this long before the return leg was detected, since a gentle start is seen late.
+const CUT_BEFORE_S = 0.2;
+
+/**
+ * Re-process the outbound leg of a loop recording as if it had been a single move with Stop pressed
+ * at the far point (1-point loops, or point 1 of a survey). Lets one recording be scored both ways.
+ * Returns the single-move result, or null when the hold at the point is too short to end a move.
+ */
+export function singleFromLoop(calibSamples, samples, loopRes, opts = {}) {
+  const hold = loopRes?.loop?.holds?.[0];
+  if (!hold) return null;
+  const t0 = samples[0].t;
+  const tCut = t0 + Math.max(hold.start + 0.5, hold.end - CUT_BEFORE_S);
+  if (tCut > t0 + hold.end) return null;
+  const cut = samples.filter((s) => s.t <= tCut);
+  return processRecording(calibSamples, cut, { ...opts, loop: false, points: 1 });
 }
 
 function grade(cal, m, warnings) {

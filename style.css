@@ -168,3 +168,11 @@ h1 { font-size: 1.4rem; margin: 4px 0 12px; font-weight: 700; }
 .sess-msg { margin-top: 8px; overflow-wrap: anywhere; }
 
 .version { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 1.5rem 0 0.5rem; }
+.sess-single { color: var(--muted); }
+.sess-ref-label { margin-top: 12px; }
+.sess-ref { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sess-ref label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: .85rem; min-width: 0; }
+.sess-ref input { width: 100%; min-width: 0; font: inherit; font-size: .95rem; padding: 6px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; }
+.sess-err { margin: 6px 0 0; font-weight: 400; }
+.sess-err li { margin-bottom: 4px; }

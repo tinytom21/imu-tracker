@@ -1,6 +1,6 @@
 {
-  "version": "0.17",
+  "version": "0.18",
   "date": "2026-10-03",
   "apkUrl": "https://github.com/tinytom21/imu-tracker/releases/download/android-latest/imu-tracker.apk",
-  "notes": "Sessions: repeat a measurement and get the mean with a suggested accuracy."
+  "notes": "Loop runs with 1 point are also shown as a single move, to compare the two methods."
 }

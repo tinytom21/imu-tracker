@@ -1,7 +1,7 @@
 // Offset UI: idle -> calibrating -> recording -> result.
 // Modules are loaded with the release version in their URL so a new release bypasses the cache.
 const V = new URL(import.meta.url).searchParams.get('v') || Date.now();
-const { stillnessOf, processRecording, calibrate, windowIsStill, STILL_WINDOW_S, CHECKPOINT_HOLD_S } =
+const { stillnessOf, processRecording, singleFromLoop, calibrate, windowIsStill, STILL_WINDOW_S, CHECKPOINT_HOLD_S } =
   await import(`./processing.js?v=${V}`);
 const { Capture } = await import(`./capture.js?v=${V}`);
 const { createViz } = await import(`./viz.js?v=${V}`);
@@ -62,7 +62,7 @@ const el = {
   main: $('main'), calibMsg: $('calibMsg'), calibBar: $('calibBar'), calibNote: $('calibNote'),
   cpMsg: $('cpMsg'), cpBar: $('cpBar'), cpCount: $('cpCount'),
   recStatus: $('recStatus'), recTime: $('recTime'), recRate: $('recRate'), recNote: $('recNote'),
-  rows: $('rows'), compare: $('compare'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
+  rows: $('rows'), single: $('single'), singleTable: $('singleTable'), compare: $('compare'), total: $('total'), badge: $('badge'), warnings: $('warnings'), details: $('details'),
   dl: $('dl'), csv: $('csv'),
   modeSingle: $('modeSingle'), modeLoop: $('modeLoop'), stepsLoop: $('stepsLoop'), stepsSingle: $('stepsSingle'),
   modeBadge: $('modeBadge'), rowsLabel: $('rowsLabel'),
@@ -137,7 +137,7 @@ let viz = null;
 
 // ---------------------------------------------------------------- session (repeat runs -> mean +/- error bar)
 const SESS_KEY = 'imuSession';
-const blankSession = (mode = 'single', points = 1) => ({ mode, points, runs: [], include: [], exclude: [], nextId: 1 });
+const blankSession = (mode = 'single', points = 1) => ({ mode, points, runs: [], include: [], exclude: [], nextId: 1, ref: null });
 function loadSession() {
   try {
     const o = JSON.parse(localStorage.getItem(SESS_KEY));
@@ -146,7 +146,9 @@ function loadSession() {
     const runs = o.runs.filter((r) => r && Number.isFinite(r.id) && r.values && Array.isArray(r.values.points)
       && r.values.points.length && r.values.points.every(okPt)).map((r) => ({
       id: r.id, time: +r.time || 0,
-      values: { points: r.values.points, baselines: Array.isArray(r.values.baselines) ? r.values.baselines.filter((b) => b && Number.isFinite(b.mm)) : [] },
+      values: { points: r.values.points, baselines: Array.isArray(r.values.baselines) ? r.values.baselines.filter((b) => b && Number.isFinite(b.mm)) : [],
+        ...(okPt(r.values.single) ? { single: r.values.single } : {}) },
+      ...(okPt(r.values.single) && r.singleQuality ? { singleQuality: String(r.singleQuality) } : {}),
       quality: String(r.quality || ''), warnings: Array.isArray(r.warnings) ? r.warnings.map(String) : [],
       loopGapMm: Number.isFinite(r.loopGapMm) ? r.loopGapMm : null,
     }));
@@ -156,10 +158,14 @@ function loadSession() {
     s.include = (Array.isArray(o.include) ? o.include : []).filter((i) => ids.includes(i));
     s.exclude = (Array.isArray(o.exclude) ? o.exclude : []).filter((i) => ids.includes(i));
     s.nextId = Math.max(+o.nextId || 1, ...ids.map((i) => i + 1), 1);
+    s.ref = okPt(o.ref) ? o.ref : null;
     return s;
   } catch { return blankSession(); }
 }
 let sess = loadSession();
+let refDraft = [];            // reference inputs as typed (a half-filled set must survive re-renders)
+const resetRefDraft = () => { refDraft = sess.ref ? sess.ref.map(String) : ['', '', '']; };
+resetRefDraft();
 let currentRun = null;        // result on screen: { values, quality, warnings, loopGapMm, key, allowed, added }
 let askClear = false;
 let pendingChange = null;
@@ -189,18 +195,20 @@ el.sessModeAsk.addEventListener('click', (e) => {
   if (act === 'modeYes' && pendingChange) {
     const { apply, newLoop, newPts } = pendingChange;
     sess = blankSession(newLoop ? 'loop' : 'single', newLoop ? newPts : 1);
-    saveSession(); apply();
+    resetRefDraft(); saveSession(); apply();
   }
   pendingChange = null; el.sessModeAsk.hidden = true; renderSession();
 });
 
-function setCurrentRun(res, source, survey) {
+function setCurrentRun(res, source, survey, single) {
   const pts = survey ? res.loop.points : [res.delta];
   currentRun = {
     values: {
       points: pts.map((p) => p.map(mm)),
       baselines: survey ? (res.loop.baselines || []).map((b) => ({ from: b.from, to: b.to, mm: Math.round(b.mm * 10) / 10 })) : [],
+      ...(single ? { single: single.delta.map(mm) } : {}),
     },
+    singleQuality: single ? single.quality.level : '',
     quality: res.quality.level, warnings: [...res.quality.warnings],
     loopGapMm: res.loop && Number.isFinite(res.loop.gapMm) ? Math.round(res.loop.gapMm) : null,
     key: uiKey(), allowed: !String(source).startsWith('csv') || DEV_CONTRIBUTE, added: null,
@@ -221,14 +229,19 @@ el.sessAdd.addEventListener('click', () => {
   if (!c || c.added !== null || c.key !== uiKey()) return;
   if (!sess.runs.length) sess = blankSession(loopMode ? 'loop' : 'single', loopMode ? numPoints : 1);
   const id = sess.nextId++;
-  sess.runs.push({ id, time: Date.now(), values: c.values, quality: c.quality, warnings: c.warnings, loopGapMm: c.loopGapMm });
+  sess.runs.push({ id, time: Date.now(), values: c.values, quality: c.quality, warnings: c.warnings, loopGapMm: c.loopGapMm,
+    ...(c.values.single ? { singleQuality: c.singleQuality } : {}) });
   c.added = id;
   saveSession(); renderSession();
 });
 
 const sessSummary = () => summarize(sess.runs.map((r) => ({ id: r.id, points: r.values.points, baselines: r.values.baselines })),
   { include: sess.include, exclude: sess.exclude });
-const ptLabel = (p) => (sess.mode === 'loop' && sess.points >= 2 ? `Point ${p + 1}` : 'Result');
+const singleRuns = () => sess.runs.filter((r) => r.values.single);
+const singleSummary = () => summarize(singleRuns().map((r) => ({ id: r.id, points: [r.values.single] })), { include: sess.include, exclude: sess.exclude });
+const compareOn = () => sess.mode === 'loop' && sess.points === 1 && singleRuns().length >= 3;
+const ptLabel = (p) => (sess.mode === 'loop' && sess.points >= 2 ? `Point ${p + 1}` : compareOn() ? 'Loop closure' : 'Result');
+const fmtSigned = (v) => (Number.isFinite(v) ? (Math.round(v) < 0 ? MINUS : '+') + Math.abs(Math.round(v)) : '–');
 const fmtMm = (v) => (Number.isFinite(v) ? (Math.round(v) < 0 ? MINUS : '') + Math.abs(Math.round(v)) : '–');
 const fmtTime = (t) => { try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
@@ -241,14 +254,35 @@ function renderSession() {
   el.sessTitle.textContent = `Session · ${runs.length} run${runs.length === 1 ? '' : 's'} (${sum.used.length} used)`;
   let h = '';
   if (sum.used.length >= 3 && sum.points.length) {
-    sum.points.forEach((ax, p) => {
-      h += `<div class="rows-label">${esc(ptLabel(p))}</div><table class="cmp-table sess-table"><thead><tr><th></th><th>Mean</th><th>± accuracy</th><th>Run-to-run SD</th></tr></thead><tbody>`;
+    const ref = sess.ref;
+    const table = (ax, label, r) => {
+      let t = `<div class="rows-label">${esc(label)}</div><table class="cmp-table sess-table"><thead><tr><th></th><th>Mean</th><th>± accuracy</th><th>Run-to-run SD</th>${r ? '<th>Error of mean</th>' : ''}</tr></thead><tbody>`;
       ['X', 'Y', 'Z'].forEach((name, a) => {
         const s = ax[a];
-        h += `<tr><th>${name}</th><td>${fmtMm(s.mean)}</td><td><b>± ${fmtMm(s.suggested)}</b></td><td>${fmtMm(s.std)}</td></tr>`;
+        t += `<tr><th>${name}</th><td>${fmtMm(s.mean)}</td><td><b>± ${fmtMm(s.suggested)}</b></td><td>${fmtMm(s.std)}</td>${r ? `<td>${fmtSigned(s.mean - r[a])}</td>` : ''}</tr>`;
       });
-      h += '</tbody></table><div class="cmp-unit">mm</div>';
+      return t + '</tbody></table><div class="cmp-unit">mm</div>';
+    };
+    const errBlock = (label, vals, r) => {
+      const e = vals.map((v) => v.map((x, a) => x - r[a]));
+      const mae = [0, 1, 2].map((a) => e.reduce((t, v) => t + Math.abs(v[a]), 0) / e.length);
+      const within = (lim) => e.filter((v) => v.every((x) => Math.abs(x) <= lim)).length;
+      return `<li><b>${esc(label)}:</b> mean |error| ${mae.map(fmtMm).join(' / ')} mm (X / Y / Z); within ±150 mm: ${within(150)} of ${e.length}; within ±100 mm: ${within(100)} of ${e.length}</li>`;
+    };
+    const byId = (id) => runs.find((r) => r.id === id);
+    const errs = [];
+    sum.points.forEach((ax, p) => {
+      h += table(ax, ptLabel(p), p === 0 ? ref : null);
+      if (p === 0 && ref) errs.push(errBlock(ptLabel(0), sum.used.map((id) => byId(id).values.points[0]), ref));
     });
+    if (compareOn()) {
+      const ss = singleSummary();
+      if (ss.used.length >= 3 && ss.points.length) {
+        h += table(ss.points[0], 'Single move', ref);
+        if (ref) errs.push(errBlock('Single move', ss.used.map((id) => byId(id).values.single), ref));
+      }
+    }
+    if (errs.length) h += `<ul class="baselines sess-err">${errs.join('')}</ul>`;
     if (sum.baselines.length) {
       h += '<ul class="baselines">' + sum.baselines.map((b) => `<li>Point ${b.from} ↔ Point ${b.to}: ${fmtMm(b.mean)} ± ${fmtMm(b.ci95)} mm</li>`).join('') + '</ul>';
     }
@@ -256,6 +290,8 @@ function renderSession() {
   } else {
     h += '<p class="cmp-note">Do at least 3 runs to get an accuracy figure.</p>';
   }
+  h += `<div class="rows-label sess-ref-label">Reference (tape/survey), mm${sess.mode === 'loop' && sess.points >= 2 ? ' — for point 1' : ''}</div><div class="sess-ref">`
+    + ['X', 'Y', 'Z'].map((n, a) => `<label>${n}<input type="number" inputmode="decimal" step="any" data-ref="${a}" value="${esc(refDraft[a] ?? '')}"></label>`).join('') + '</div>';
   h += '<ul class="sess-runs">';
   for (const r of [...runs].reverse()) {
     const out = sum.outliers.includes(r.id), inc = sess.include.includes(r.id), exc = sess.exclude.includes(r.id);
@@ -264,7 +300,7 @@ function renderSession() {
     const status = exc ? 'left out' : out && !inc ? 'outlier — not used' : out ? 'outlier — used anyway' : '';
     h += `<li class="sess-run${exc || (out && !inc) ? ' off' : ''}"><div class="sess-run-head"><b>Run ${r.id}</b><span>${esc(fmtTime(r.time))}</span>`
       + `${r.quality ? `<span class="badge ${esc(r.quality)} mini">${esc(r.quality)}</span>` : ''}<button type="button" class="sess-x" data-act="del" data-id="${r.id}" aria-label="Delete run ${r.id}">✕</button></div>`
-      + `<div class="sess-vals">${vals}</div>${status ? `<div class="sess-status">${status}</div>` : ''}<div class="sess-actions">`
+      + `<div class="sess-vals">${vals}</div>${r.values.single ? `<div class="sess-vals sess-single">Single: X ${fmtMm(r.values.single[0])} · Y ${fmtMm(r.values.single[1])} · Z ${fmtMm(r.values.single[2])}</div>` : ''}${status ? `<div class="sess-status">${status}</div>` : ''}<div class="sess-actions">`
       + (out && !exc ? `<button type="button" class="sess-btn" data-act="${inc ? 'unincl' : 'incl'}" data-id="${r.id}">${inc ? 'Ignore again' : 'Use anyway'}</button>` : '')
       + `<button type="button" class="sess-btn" data-act="${exc ? 'unexcl' : 'excl'}" data-id="${r.id}">${exc ? 'Use' : 'Leave out'}</button></div></li>`;
   }
@@ -286,13 +322,17 @@ function sessionCsv() {
   const bNames = withB.values.baselines.map((b) => `baseline_${b.from}_${b.to}_mm`);
   const head = ['run', 'time', 'quality', 'loop_gap_mm', 'status'];
   for (let p = 1; p <= nP; p++) head.push(`p${p}_x_mm`, `p${p}_y_mm`, `p${p}_z_mm`);
-  head.push(...bNames);
+  head.push(...bNames, 'single_x_mm', 'single_y_mm', 'single_z_mm');
+  if (sess.ref) head.push('ref_x_mm', 'ref_y_mm', 'ref_z_mm');
+  const ss = singleRuns().length ? singleSummary() : null;
   const lines = [head.join(',')];
   for (const r of runs) {
     const out = sum.outliers.includes(r.id), inc = sess.include.includes(r.id), exc = sess.exclude.includes(r.id);
     const row = [r.id, new Date(r.time).toISOString(), r.quality, r.loopGapMm ?? '', exc ? 'left_out' : out && !inc ? 'outlier' : 'used'];
     for (let p = 0; p < nP; p++) row.push(...(r.values.points[p] || ['', '', '']));
     for (let b = 0; b < bNames.length; b++) row.push(r.values.baselines[b]?.mm ?? '');
+    row.push(...(r.values.single || ['', '', '']));
+    if (sess.ref) row.push('', '', '');
     lines.push(row.join(','));
   }
   if (sum.used.length >= 1) {
@@ -304,8 +344,14 @@ function sessionCsv() {
         const bs = sum.baselines[b];
         row.push(bs ? v(name === 'mean' ? bs.mean : name === 'accuracy' ? bs.ci95 : bs.std) : '');
       }
+      row.push(...(ss && ss.points[0] ? ss.points[0].map((s) => v(f(s))) : ['', '', '']));
+      if (sess.ref) row.push('', '', '');
       lines.push(row.join(','));
     }
+  }
+  if (sess.ref) {
+    const row = ['reference', '', '', '', '', ...Array(nP * 3 + bNames.length + 3).fill(''), ...sess.ref];
+    lines.push(row.join(','));
   }
   return lines.join('\n') + '\n';
 }
@@ -335,9 +381,12 @@ el.sessBody.addEventListener('click', async (e) => {
   else if (act === 'del') { sess.runs = sess.runs.filter((r) => r.id !== id); sess.include = without(sess.include); sess.exclude = without(sess.exclude); }
   else if (act === 'clear') { askClear = true; return renderSession(); }
   else if (act === 'clearNo') { askClear = false; return renderSession(); }
-  else if (act === 'clearYes') { askClear = false; sess = blankSession(sess.mode, sess.points); }
+  else if (act === 'clearYes') { askClear = false; sess = blankSession(sess.mode, sess.points); resetRefDraft(); }
   else if (act === 'copy') {
-    const ok = await copyText(summaryText(sessSummary(), ptLabel));
+    let text = summaryText(sessSummary(), ptLabel);
+    if (compareOn()) { const ss = singleSummary(); if (ss.used.length >= 3) text += '\n' + summaryText(ss, () => 'Single move'); }
+    if (sess.ref) text += `\nReference: X ${sess.ref[0]} Y ${sess.ref[1]} Z ${sess.ref[2]} mm`;
+    const ok = await copyText(text);
     btn.textContent = ok ? 'Copied' : 'Copy failed';
     setTimeout(() => { if (btn.isConnected) btn.textContent = 'Copy summary'; }, 1500);
     return;
@@ -360,6 +409,14 @@ el.sessBody.addEventListener('click', async (e) => {
     }
     return;
   }
+  saveSession(); renderSession();
+});
+
+el.sessBody.addEventListener('change', (e) => {
+  if (!e.target.closest('[data-ref]')) return;
+  for (const i of el.sessBody.querySelectorAll('[data-ref]')) refDraft[+i.dataset.ref] = i.value.trim();
+  const v = refDraft.map((t) => (t === '' ? NaN : +t));
+  sess.ref = v.every(Number.isFinite) ? v : null;
   saveSession(); renderSession();
 });
 
@@ -588,6 +645,24 @@ function showResult(calib, rec, source) {
   el.rows.hidden = survey;
   el.survey.hidden = !survey;
   el.rowsLabel.hidden = !loopMode || survey;
+  let single = null;
+  if (loopMode && numPoints === 1 && res.loop) {
+    try { single = singleFromLoop(calib, rec, res, loopOpts()); } catch { single = null; }
+  }
+  el.single.hidden = !single;
+  if (single) {
+    const cell = (tag, text) => { const c = document.createElement(tag); c.textContent = text; return c; };
+    el.singleTable.innerHTML = '';
+    const head = el.singleTable.createTHead().insertRow();
+    for (const h of ['', 'X', 'Y', 'Z']) head.appendChild(cell('th', h));
+    const body = el.singleTable.createTBody();
+    for (const [name, v] of [['Loop closure', res.delta], ['Single move (outbound leg only)', single.delta],
+      ['Difference (single − loop)', single.delta.map((d, i) => d - res.delta[i])]]) {
+      const row = body.insertRow();
+      row.appendChild(cell('th', name));
+      for (const c of v) row.appendChild(cell('td', signed(c)));
+    }
+  }
   if (survey) {
     const cell = (tag, text) => { const c = document.createElement(tag); c.textContent = text; return c; };
     el.surveyTable.innerHTML = '';
@@ -732,7 +807,7 @@ function showResult(calib, rec, source) {
     el.details.append(dt, dd);
   }
   viz?.update(res.path, null, markers);
-  setCurrentRun(res, source, survey);
+  setCurrentRun(res, source, survey, single);
   offerContribution(res, calib, rec, source, loopMode, loopMode ? numPoints : 1);
   el.result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
